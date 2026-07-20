@@ -27,6 +27,18 @@ DEMAND_RANGE = (3, 12)  # боксов/стоп
 SERVICE_MIN = 4.0  # мин обслуживания/стоп
 DEFAULT_SEED = 0
 
+# --- флот / стоимость / штрафы (dec-0001 §2-3, [ASSUMED, config]; калибруется Phase 4) ---
+FLEET_SIZE = 6  # K машин
+VEHICLE_CAP = 60  # Q боксов
+T_MAX_MIN = 240.0  # макс. тур, мин (4ч)
+COST_PER_VEHICLE = 50.0  # c_f, € за задействованную машину
+COST_PER_KM = 0.5  # c_d, €/км
+COST_PER_HOUR = 20.0  # c_t, €/ч
+PENALTY_LATE_PER_MIN = 2.0  # штраф опоздания, €/мин
+PENALTY_UNSERVED = 200.0  # € за необслуженную аптеку
+PENALTY_INVALID = 1000.0  # € за невалидное действие (терминал)
+DENSE_REWARD = False  # dense-shaping по шагам (по умолчанию off)
+
 SNAP_ROOT = Path("data/snapshots")
 
 
@@ -39,6 +51,7 @@ class Instance:
     kinds: list[str]  # depot | pharmacy
     time_matrix: np.ndarray  # (k,k) под-матрица включённых стопов, сек
     dist_matrix: np.ndarray  # (k,k), м
+    coords: np.ndarray  # (k,2) [x=lon, y=lat] на стоп
     windows: np.ndarray  # (k,2) [e_i,l_i] сек от start_datetime; депо=[0,horizon]
     demand: np.ndarray  # (k,) боксов; депо=0
     service: np.ndarray  # (k,) сек; депо=0
@@ -134,6 +147,7 @@ def generate_instance(
     included: list[int] = []
     excluded: list[int] = []
     node_ids: list[int] = []
+    coords: list[list[float]] = []
     kinds: list[str] = []
     tw_source: list[str] = []
     win_e: list[float] = []
@@ -146,6 +160,7 @@ def generate_instance(
         if row.kind == "depot":
             included.append(stop_i)
             node_ids.append(int(row.node_id))
+            coords.append([float(row.x), float(row.y)])
             kinds.append("depot")
             tw_source.append("DEPOT")
             win_e.append(0.0)
@@ -159,6 +174,7 @@ def generate_instance(
             continue
         included.append(stop_i)
         node_ids.append(int(row.node_id))
+        coords.append([float(row.x), float(row.y)])
         kinds.append("pharmacy")
         tw_source.append(src)
         win_e.append(e_s)
@@ -173,6 +189,7 @@ def generate_instance(
         kinds=kinds,
         time_matrix=snap.time_matrix[np.ix_(idx, idx)],
         dist_matrix=snap.dist_matrix[np.ix_(idx, idx)],
+        coords=np.array(coords, dtype=float),
         windows=np.column_stack([win_e, win_l]),
         demand=np.array(demand),
         service=np.array(service),
