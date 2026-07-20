@@ -28,8 +28,13 @@ def main() -> None:
     print("[3/5] аптеки + депо …")
     ph = osm.load_pharmacies(cfg.PLACE)
     n_ph = len(ph)
+    oh_col = ph["opening_hours"].astype("string").str.strip()
+    oh_present = oh_col.notna() & (oh_col != "")
+    oh_present_pct = round(100.0 * int(oh_present.sum()) / n_ph, 2) if n_ph else 0.0
+    ph_oh = ph["opening_hours"].to_numpy()
     depot_lat, depot_lon = osm.geocode_depot(cfg.DEPOT_ADDR)
-    print(f"      аптек={n_ph}  депо=({depot_lat:.5f}, {depot_lon:.5f})")
+    print(f"      аптек={n_ph} (opening_hours={oh_present_pct}%)")
+    print(f"      депо=({depot_lat:.5f}, {depot_lon:.5f})")
 
     print("[4/5] снаппинг к узлам …")
     ph_points = list(zip(ph["x"].to_numpy(), ph["y"].to_numpy(), strict=True))  # (lon, lat)
@@ -59,9 +64,27 @@ def main() -> None:
     time_m, dist_m = osm.build_matrices(g, stop_nodes)
     assert time_m.shape == (1 + n_ph, 1 + n_ph), "матрица схлопнута — индексируется не по стопам!"
 
-    rows = [{"stop": 0, "kind": "depot", "node_id": depot_node, "x": depot_lon, "y": depot_lat}]
+    depot_row = {
+        "stop": 0,
+        "kind": "depot",
+        "node_id": depot_node,
+        "x": depot_lon,
+        "y": depot_lat,
+        "opening_hours": None,
+    }
+    rows = [depot_row]
     for i, ((x, y), n) in enumerate(zip(ph_points, ph_nodes, strict=True), start=1):
-        rows.append({"stop": i, "kind": "pharmacy", "node_id": n, "x": x, "y": y})
+        oh = ph_oh[i - 1]
+        rows.append(
+            {
+                "stop": i,
+                "kind": "pharmacy",
+                "node_id": n,
+                "x": x,
+                "y": y,
+                "opening_hours": None if pd.isna(oh) else str(oh),
+            }
+        )
     nodes_df = pd.DataFrame(rows)
 
     date = datetime.now().strftime("%Y%m%d")
@@ -72,6 +95,7 @@ def main() -> None:
         "n_pharmacies": n_ph,
         "n_nodes": g.number_of_nodes(),
         "maxspeed_coverage_pct": round(coverage, 2),
+        "opening_hours_present_pct": oh_present_pct,
     }
     out = Path("data/snapshots") / f"augsburg_{date}"
     snapshot.save_snapshot(out, g, stop_nodes, time_m, dist_m, nodes_df, meta)

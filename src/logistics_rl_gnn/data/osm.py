@@ -9,6 +9,7 @@ from __future__ import annotations
 import networkx as nx
 import numpy as np
 import osmnx as ox
+import pandas as pd
 
 from logistics_rl_gnn.config import data as cfg
 
@@ -42,6 +43,8 @@ def load_pharmacies(place: str = cfg.PLACE):
     """
     gdf = ox.features_from_place(place, tags=cfg.PHARMACY_TAGS)
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty]
+    if "opening_hours" not in gdf.columns:  # колонка есть только если хоть одна аптека с тегом
+        gdf = gdf.assign(opening_hours=pd.NA)
     pts = gdf.geometry.representative_point()
     return gdf.assign(x=pts.x.to_numpy(), y=pts.y.to_numpy())
 

@@ -2,12 +2,13 @@
 
 # Hot Cache
 
-**Auto-refreshed:** 2026-07-20 18:12:09 (every SessionStart)
+**Auto-refreshed:** 2026-07-20 19:20:15 (every SessionStart)
 **Branch:** `main`
 
 ## 🔀 Recent commits (top 5)
 
 ```
+d7498df feat: Phase 2 — OSMnx-пайплайн Аугсбурга (data)
 e711c37 feat: Phase 1 — скелет репо + verifier-петля
 835b43c chore: initial scaffold + MDP spec (0001)
 ```
@@ -24,19 +25,21 @@ e711c37 feat: Phase 1 — скелет репо + verifier-петля
 
 # Hot Cache — curated
 
-**Last update:** 2026-07-20 18:11 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
+**Last update:** 2026-07-20 19:15 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
 
 ## 🔥 What's Hot
-- Phase 1 ЗАКРЫТА (коммит `e711c37`): скелет `src/logistics_rl_gnn/` (пакеты docstring-only),
-  smoke-тест, ruff pre-commit, justfile, README. Верификатор зелёный. Рантайм-депсы ещё пустые.
-- Постановка RL-задачи зафиксирована → `decisions/0001-mdp-spec.md` (CVRPTW, аптеки Аугсбурга, OSM).
-- Верификатор-петля: `pip install -e ".[dev]" && pytest -q && ruff check . && ruff format --check .`
-  (или `just check`); ruff гоняется по всему репо, включая `scripts/`.
+- Phase 2 ЗАКРЫТА (коммит `d7498df`): OSMnx-пайплайн Аугсбурга. Снапшот строится
+  `python scripts/build_snapshot.py` → `data/snapshots/augsburg_<YYYYMMDD>/` (вне git).
+  Реальные числа: 4819 узлов, maxspeed-покрытие 89.7%, 62 аптеки; матрицы 63×63 ПО СТОПАМ.
+- Ключевое в матрицах: индексация ПО СТОПАМ (депо + каждая аптека = строка), НЕ по уникальным
+  узлам; со-узловые аптеки → Δ=0, но отдельные строки. dim = 1 + n_pharmacies.
+- Депы: группа `[data]` (osmnx 2.1/CPU). `.gitignore` анкорит `/data/` и `/cache/` — НЕ вернуть
+  к `data/` (тихо игнорит пакет кода `src/.../data/`).
 
 ## ⏭️ Next
-- Phase 2 (data): OSMnx-пайплайн — граф Augsburg drive + депо (PHOENIX VZ) + аптеки. Тогда
-  запинить `osmnx`/`networkx`/`shapely` под CPU. Verify-гейт = % покрытия maxspeed.
-- `/init` (code-discovery) наполнит fold-in в CLAUDE.md, когда `src/` обрастёт логикой.
+- Phase 3 (env): `DynamicVRPEnv` (MDP dec-0001 §3) поверх снапшота — state/action(masking)/reward,
+  transition с travel-time из матриц + congestion-профиль. Пинить `gymnasium`/`numpy`.
+- Phase 4 baseline (OR-Tools + greedy) — до RL, для честного «Было/Стало» (запрет №3).
 
 ## 🚧 Blockers
 - нет

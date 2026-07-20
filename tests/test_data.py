@@ -79,3 +79,9 @@ def test_depot_resolved(snap):
 def test_meta_coverage(snap):
     cov = snap.meta["maxspeed_coverage_pct"]
     assert cov is not None and 0 < cov <= 100, "покрытие maxspeed вне (0, 100]"
+
+
+def test_opening_hours(snap):
+    assert "opening_hours" in snap.nodes.columns, "нет колонки opening_hours"
+    pct = snap.meta["opening_hours_present_pct"]
+    assert 0 <= pct <= 100, "opening_hours_present_pct вне [0, 100]"
