@@ -1,0 +1,4 @@
+{
+  "mcpServers": {},
+  "_comment": "Скоупинг: project-specific серверы (БД/API проекта) — сюда, committed; стабильные кросс-проектные — user-level/плагины. CLI > MCP где CLI есть (gh, gcloud). Секреты — только env vars. Каждый сервер должен быть объясним — иначе не подключать."
+}

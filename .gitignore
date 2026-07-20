@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Данные и веса — вне репо (запрет №1: OSM-выгрузки, датасеты, чекпойнты, логи)
+data/
+*.pt
+*.ckpt
+wandb/
+outputs/
