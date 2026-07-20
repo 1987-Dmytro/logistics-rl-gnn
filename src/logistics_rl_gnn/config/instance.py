@@ -11,6 +11,7 @@ opening_hours_py устанавливается как пакет `opening_hours
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -28,9 +29,9 @@ SERVICE_MIN = 4.0  # мин обслуживания/стоп
 DEFAULT_SEED = 0
 
 # --- флот / стоимость / штрафы (dec-0001 §2-3, [ASSUMED, config]; калибруется Phase 4) ---
-FLEET_SIZE = 6  # K машин
-VEHICLE_CAP = 60  # Q боксов
-T_MAX_MIN = 240.0  # макс. тур, мин (4ч)
+FLEET_SIZE = 8  # K машин (калибровка: 6→8, чтобы K*Q покрывал спрос)
+VEHICLE_CAP = 80  # Q боксов (калибровка: 60→80)
+T_MAX_MIN = 240.0  # макс. тур, мин (4ч) — обоснование в dec-0001 §6
 COST_PER_VEHICLE = 50.0  # c_f, € за задействованную машину
 COST_PER_KM = 0.5  # c_d, €/км
 COST_PER_HOUR = 20.0  # c_t, €/ч
@@ -131,6 +132,32 @@ def _latest_snapshot_dir():
     return dirs[-1] if dirs else None
 
 
+def _check_feasibility(demand, service, time_m) -> None:
+    """Страж инстанса (пойманный баг Phase 3 → постоянная проверка).
+
+    raise если суммарный спрос > K*Q (инфеасибл); warn если утилизация > 0.9;
+    assert достижимости каждой аптеки: депо→i→депо + сервис <= T_max.
+    demand/service — списки (депо = индекс 0); time_m — сек.
+    """
+    cap = FLEET_SIZE * VEHICLE_CAP
+    total = float(sum(demand))
+    if total > cap:
+        raise ValueError(f"инфеасибл: спрос {total:.0f} > K*Q={cap} (мало машин/вместимости)")
+    util = total / cap
+    if util > 0.9:
+        warnings.warn(
+            f"высокая утилизация {util:.0%} (спрос {total:.0f}/{cap}) — риск unserved",
+            stacklevel=2,
+        )
+    t_max_s = T_MAX_MIN * 60.0
+    for i in range(1, len(demand)):  # 0 = депо
+        round_trip = float(time_m[0, i] + service[i] + time_m[i, 0])
+        assert round_trip <= t_max_s, (
+            f"аптека #{i} недостижима в T_max: депо→i→депо+сервис = "
+            f"{round_trip / 60:.1f} > {T_MAX_MIN} мин"
+        )
+
+
 def generate_instance(
     snapshot_dir=None, *, seed: int = DEFAULT_SEED, delivery_weekday: int = DELIVERY_WEEKDAY
 ) -> Instance:
@@ -183,11 +210,13 @@ def generate_instance(
         service.append(SERVICE_MIN * 60.0)
 
     idx = np.array(included)
+    time_m = snap.time_matrix[np.ix_(idx, idx)]
+    _check_feasibility(demand, service, time_m)  # страж: инстанс обслуживаем и достижим
     return Instance(
         node_ids=node_ids,
         snapshot_stops=included,
         kinds=kinds,
-        time_matrix=snap.time_matrix[np.ix_(idx, idx)],
+        time_matrix=time_m,
         dist_matrix=snap.dist_matrix[np.ix_(idx, idx)],
         coords=np.array(coords, dtype=float),
         windows=np.column_stack([win_e, win_l]),

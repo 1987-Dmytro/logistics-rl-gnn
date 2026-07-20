@@ -107,3 +107,34 @@ def test_excluded_consistent(inst):
             continue
         status, *_ = im.real_day_window(nodes.loc[stop_i, "opening_hours"], ds, de)
         assert status != "CLOSED", f"стоп {stop_i} включён, но CLOSED"
+
+
+# ---------- страж-феасибилити (калибровка) ----------
+
+_HAS_SNAP = im._latest_snapshot_dir() is not None
+
+
+@pytest.mark.skipif(not _HAS_SNAP, reason="нет снапшота")
+def test_feasibility_invariant():
+    cap = im.FLEET_SIZE * im.VEHICLE_CAP
+    for seed in range(5):  # не raise + спрос ≤ K*Q
+        inst = im.generate_instance(seed=seed, delivery_weekday=WEEKDAY)
+        assert float(inst.demand.sum()) <= cap
+
+
+@pytest.mark.skipif(not _HAS_SNAP, reason="нет снапшота")
+def test_reachability_invariant():
+    t_max_s = im.T_MAX_MIN * 60.0
+    for seed in range(5):
+        inst = im.generate_instance(seed=seed, delivery_weekday=WEEKDAY)
+        tm, svc = inst.time_matrix, inst.service
+        for i in range(1, len(inst.node_ids)):  # 0 = депо
+            assert tm[0, i] + svc[i] + tm[i, 0] <= t_max_s, f"аптека {i} недостижима в T_max"
+
+
+@pytest.mark.skipif(not _HAS_SNAP, reason="нет снапшота")
+def test_feasibility_guard_raises(monkeypatch):
+    # искусственно ужимаем Q → спрос > K*Q → страж обязан бросить
+    monkeypatch.setattr(im, "VEHICLE_CAP", 1)
+    with pytest.raises(ValueError, match="инфеасибл"):
+        im.generate_instance(seed=0, delivery_weekday=WEEKDAY)
