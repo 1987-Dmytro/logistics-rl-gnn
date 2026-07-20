@@ -3,6 +3,7 @@
 
 Никакого yaml — plain JSON. Идемпотентен, exit 0 всегда.
 """
+
 import json
 import sys
 from datetime import datetime
@@ -19,8 +20,11 @@ def ensure_daily_log():
     p = logs / f"{today}.md"
     if not p.exists():
         tmpl = KN / "templates" / "daily-log.md"
-        body = tmpl.read_text(encoding="utf-8").replace("{{DATE}}", today) if tmpl.is_file() \
+        body = (
+            tmpl.read_text(encoding="utf-8").replace("{{DATE}}", today)
+            if tmpl.is_file()
             else f"---\ntype: daily_log\ndate: {today}\n---\n\n# {today}\n\n## Sessions\n"
+        )
         p.write_text(body, encoding="utf-8")
     with p.open("a", encoding="utf-8") as f:
         f.write(f"- {datetime.now().strftime('%H:%M')}: session ended (auto)\n")
@@ -28,8 +32,13 @@ def ensure_daily_log():
 
 
 def regen_index():
-    lines = ["# knowledge/ index", "",
-             f"*Авто-генерируется Stop-хуком ({datetime.now().strftime('%Y-%m-%d %H:%M')}); руками не править.*", ""]
+    lines = [
+        "# knowledge/ index",
+        "",
+        f"*Авто-генерируется Stop-хуком "
+        f"({datetime.now().strftime('%Y-%m-%d %H:%M')}); руками не править.*",
+        "",
+    ]
     counts = {}
     for d in sorted(p for p in KN.iterdir() if p.is_dir() and not p.name.startswith(".")):
         files = sorted(d.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
@@ -54,9 +63,15 @@ def main():
         return
     p = ensure_daily_log()
     counts = regen_index()
-    (KN / ".vault-state.json").write_text(json.dumps(
-        {"last_update": datetime.now().isoformat(timespec="seconds"), "counts": counts},
-        indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (KN / ".vault-state.json").write_text(
+        json.dumps(
+            {"last_update": datetime.now().isoformat(timespec="seconds"), "counts": counts},
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     print(f"brain-session-end: OK (log={p.name}, index regen, {sum(counts.values())} files)")
 
 

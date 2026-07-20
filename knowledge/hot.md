@@ -2,8 +2,18 @@
 
 # Hot Cache
 
-**Auto-refreshed:** 2026-07-20 13:17:54 (every SessionStart)
+**Auto-refreshed:** 2026-07-20 17:48:53 (every SessionStart)
 **Branch:** `main`
+
+## 🔀 Recent commits (top 5)
+
+```
+835b43c chore: initial scaffold + MDP spec (0001)
+```
+
+## 📋 Recent decisions
+
+- `0001-mdp-spec.md` — 0001 — Динамический CVRPTW: доставка по аптекам Аугсбурга
 
 ## 📅 Recent daily logs
 
@@ -13,16 +23,17 @@
 
 # Hot Cache — curated
 
-**Last update:** 2026-07-20 13:16 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
+**Last update:** 2026-07-20 17:25 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
 
 ## 🔥 What's Hot
-- Проект только заскаффолжен (второй мозг поставлен). Постановка RL-задачи (CVRPTW) ещё не зафиксирована.
-- Рантайм-зависимости (torch/torch-geometric/gymnasium/ortools) НЕ пинятся до фиксации задачи и железа (CPU vs ROCm).
-- CLAUDE.md: dev-команды заполнены (`pip install -e ".[dev]"`, pytest, ruff); код-карта — later, когда будет `src/`.
+- Постановка RL-задачи ЗАФИКСИРОВАНА → `decisions/0001-mdp-spec.md`: динамический CVRPTW,
+  доставка по аптекам Аугсбурга на реальной OSM-сети; входы помечены `[REAL]`/`[ASSUMED]`.
+- Репо инициализирован: первый коммит `835b43c` (scaffold + spec), есть `.gitignore` (запрет №1).
+- Рантайм-зависимости (torch/torch-geometric/gymnasium/ortools) всё ещё НЕ пинятся — до фиксации железа (CPU vs ROCm).
 
 ## ⏭️ Next
-- Зафиксировать постановку RL-задачи (state/action/reward, CVRPTW-инстанс).
-- Затем — запинить рантайм-зависимости под выбранное железо.
+- Запинить рантайм-зависимости под выбранное железо (CPU vs ROCm) — теперь постановка есть.
+- Начать код в `src/`: сбор OSM Augsburg + депо/аптеки (Phase 2, verify-гейт = % покрытия maxspeed).
 - Запустить `/init` (code-discovery) когда появится код в `src/`.
 
 ## 🚧 Blockers

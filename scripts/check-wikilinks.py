@@ -4,6 +4,7 @@
 Скан: knowledge/**/*.md + native memory-dir проекта. Резолв: basename ноты (без .md) ИЛИ
 frontmatter `name:`-slug (memory). Битые — в stdout. Exit 0 всегда (non-blocking).
 """
+
 import re
 import sys
 from pathlib import Path
@@ -50,7 +51,14 @@ def main():
             for m in WIKILINK.finditer(text):
                 name = m.group(1).split("|")[0].split("#")[0].strip().removesuffix(".md")
                 if name and name not in known:
-                    broken.append((str(p.relative_to(ROOT.parent if base != memory_dir() else base.parent)), name))
+                    broken.append(
+                        (
+                            str(
+                                p.relative_to(ROOT.parent if base != memory_dir() else base.parent)
+                            ),
+                            name,
+                        )
+                    )
     if broken:
         print(f"check-wikilinks: {len(broken)} битых линков")
         for f, n in broken[:30]:

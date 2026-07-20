@@ -6,6 +6,7 @@
   <!-- AUTO-GEN END (everything below preserved across refreshes) -->
 Fail-safe: маркеры сломаны/не по одному → предупреждение, файл НЕ трогаем.
 """
+
 import subprocess
 import sys
 from datetime import datetime
@@ -25,26 +26,44 @@ def sh(*args):
 
 
 def build_auto():
-    out = [START, "", "# Hot Cache", "",
-           f"**Auto-refreshed:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (every SessionStart)",
-           f"**Branch:** `{sh('git', 'branch', '--show-current') or '—'}`", ""]
+    out = [
+        START,
+        "",
+        "# Hot Cache",
+        "",
+        f"**Auto-refreshed:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (every SessionStart)",
+        f"**Branch:** `{sh('git', 'branch', '--show-current') or '—'}`",
+        "",
+    ]
     log = sh("git", "log", "--oneline", "-5")
     if log:
         out += ["## 🔀 Recent commits (top 5)", "", "```", log, "```", ""]
     goals = ROOT / "knowledge" / "goals" / "INDEX.md"  # feature-detect (модуль M2)
     if goals.is_file():
-        rows = [ln for ln in goals.read_text(encoding="utf-8").splitlines()
-                if ln.startswith("| ") and "---" not in ln and not ln.startswith("| Goal")]
+        rows = [
+            ln
+            for ln in goals.read_text(encoding="utf-8").splitlines()
+            if ln.startswith("| ") and "---" not in ln and not ln.startswith("| Goal")
+        ]
         if rows:
             out += ["## 🎯 Active goals", ""] + rows[:5] + [""]
     dec_dir = ROOT / "knowledge" / "decisions"
-    decs = sorted(dec_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:3] \
-        if dec_dir.is_dir() else []
+    decs = (
+        sorted(dec_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:3]
+        if dec_dir.is_dir()
+        else []
+    )
     if decs:
         out += ["## 📋 Recent decisions", ""]
         for p in decs:
-            head = next((ln.lstrip("# ").strip() for ln in p.read_text(encoding="utf-8").splitlines()
-                         if ln.startswith("# ")), p.stem)
+            head = next(
+                (
+                    ln.lstrip("# ").strip()
+                    for ln in p.read_text(encoding="utf-8").splitlines()
+                    if ln.startswith("# ")
+                ),
+                p.stem,
+            )
             out.append(f"- `{p.name}` — {head}")
         out.append("")
     logs_dir = ROOT / "knowledge" / "daily_logs"

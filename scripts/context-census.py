@@ -5,6 +5,7 @@
 MEMORY.md (cap 25KB — больше не грузится) · knowledge/hot.md · .claude/rules/*.md БЕЗ paths:
 (они грузятся каждую сессию). Одна строка вывода; warn > 9K. Exit 0.
 """
+
 import re
 import sys
 from pathlib import Path
@@ -34,7 +35,9 @@ def main():
             srcs += 1
             # @import 1 уровень (inline-разворачивание считается в бюджет)
             try:
-                for m in re.finditer(r"(?:^|\s)@([\w./~-]+\.md)", p.read_text(encoding="utf-8", errors="replace")):
+                for m in re.finditer(
+                    r"(?:^|\s)@([\w./~-]+\.md)", p.read_text(encoding="utf-8", errors="replace")
+                ):
                     total += nbytes((p.parent / m.group(1)).resolve())
             except OSError:
                 pass
@@ -49,8 +52,12 @@ def main():
         if "paths:" not in head:  # без paths: — грузится всегда
             total += nbytes(p)
     ktok = total / 4 / 1000
-    warn = f"  ⚠️ > {TARGET_KTOK}K target — де-блоат: rules+paths: / ужать MEMORY-индекс / curated hot.md" \
-        if ktok > TARGET_KTOK else ""
+    warn = (
+        f"  ⚠️ > {TARGET_KTOK}K target — де-блоат: "
+        f"rules+paths: / ужать MEMORY-индекс / curated hot.md"
+        if ktok > TARGET_KTOK
+        else ""
+    )
     print(f"brain-census: {ktok:.1f}Ktok boot-налог{warn}")
 
 
