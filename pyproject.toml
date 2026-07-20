@@ -29,6 +29,10 @@ data = [
     "numpy>=1.26",
     "pyarrow>=15",  # parquet I/O для матриц/узлов
 ]
+# Phase 3: RL-среда. Полный gymnasium — по основному промпту Phase 3.
+env = [
+    "opening_hours_py",  # парсинг OSM opening_hours (Rust-биндинг; модуль обычно opening_hours)
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
