@@ -10,7 +10,10 @@ venv/
 htmlcov/
 
 # Данные и веса — вне репо (запрет №1: OSM-выгрузки, датасеты, чекпойнты, логи)
-data/
+# ВАЖНО: анкор /data/ — иначе паттерн ловит и src/logistics_rl_gnn/data/ (пакет кода!).
+# /data/ = OSM-снапшоты Аугсбурга (data/snapshots/); /cache/ = сырой кэш OSMnx.
+/data/
+/cache/
 *.pt
 *.ckpt
 wandb/
