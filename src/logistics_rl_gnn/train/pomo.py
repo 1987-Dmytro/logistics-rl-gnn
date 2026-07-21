@@ -51,7 +51,8 @@ def _decode(policy, env, enc, start: int, mode: str, *, reset_seed: int = 0):
     """Траектория из ФОРСИРОВАННОГО первого узла start, дальше mode∈{sample,greedy}.
 
     enc — общий (encode ОДИН раз на инстанс, переживает reset: статический граф). start взят из
-    feasible_starts → допустим → log_prob конечен. -> (cost, sum_logp, mean_ent, routes).
+    feasible_starts (допустим). Форс-шаг ИСКЛЮЧЁН из sum_logp/энтропии (канон POMO: prob=1 у
+    навязанного действия → вклад в градиент 0). -> (cost, sum_logp, mean_ent, routes).
     """
     obs, _ = env.reset(seed=reset_seed)
     logps, ents = [], []
@@ -59,20 +60,24 @@ def _decode(policy, env, enc, start: int, mode: str, *, reset_seed: int = 0):
     done = False
     while not done:
         dist = policy.action_dist(env, obs, enc)
-        if forced is not None:
+        forced_step = forced is not None
+        if forced_step:
             a = torch.as_tensor(forced, device=policy.device)
             forced = None
         elif mode == "greedy":
             a = dist.probs.argmax()
         else:
             a = dist.sample()
-        logps.append(dist.log_prob(a))
-        p = dist.probs  # ручная энтропия: маскед p=0 → 0·log≈0 (без NaN от −inf логитов)
-        ents.append(-(p * (p + 1e-12).log()).sum())
+        if not forced_step:  # форс-старт — не решение π (prob=1) → вне градиента (канон POMO)
+            logps.append(dist.log_prob(a))
+            p = dist.probs  # ручная энтропия: маскед p=0 → 0·log≈0 (без NaN от −inf логитов)
+            ents.append(-(p * (p + 1e-12).log()).sum())
         obs, _, term, trunc, info = env.step(int(a.item()))
         done = term or trunc
     cost = -evaluate_solution(info["routes"], env._inst, env._cost_cfg)["reward"]
-    return cost, torch.stack(logps).sum(), torch.stack(ents).mean(), info["routes"]
+    slp = torch.stack(logps).sum() if logps else torch.zeros((), device=policy.device)
+    ent = torch.stack(ents).mean() if ents else torch.zeros((), device=policy.device)
+    return cost, slp, ent, info["routes"]
 
 
 def multistart_greedy(policy, env, max_starts: int, *, reset_seed: int = 0):
