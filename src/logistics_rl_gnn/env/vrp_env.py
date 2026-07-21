@@ -15,9 +15,10 @@ from gymnasium import spaces
 
 from logistics_rl_gnn.config import instance as cfg
 from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution
-from logistics_rl_gnn.env.travel import FreeFlowTravel
+from logistics_rl_gnn.env.travel import FreeFlowTravel, time_context
 
-_NF = 8  # признаков на узел: x, y, demand, e, l, service, visited, feasible
+# признаков на узел: x, y, demand, e, l, service, visited, feasible, congestion
+_NF = 9  # congestion = уровень пробки/инцидента у узла (0 под free-flow, Phase 6b Шаг 0)
 
 
 class VRPEnv(gym.Env):
@@ -47,6 +48,7 @@ class VRPEnv(gym.Env):
             lambda seed: cfg.generate_instance(seed=seed, delivery_weekday=delivery_weekday)
         )
         self.K = int(fleet_size)
+        self.dow = int(delivery_weekday)  # для time-context (congestion-фаза дня недели)
         self.Q = float(vehicle_cap)
         self.t_max_min = float(t_max_min)
         self.c_f, self.c_d, self.c_t = float(cost_vehicle), float(cost_km), float(cost_hour)
@@ -65,6 +67,8 @@ class VRPEnv(gym.Env):
             {
                 "node_features": spaces.Box(-1e6, 1e6, shape=(self.k, _NF), dtype=np.float32),
                 "vehicle_state": spaces.Box(-1e6, 1e6, shape=(4,), dtype=np.float32),
+                # time-context: [sin_h, cos_h, sin_dow, cos_dow] — фаза congestion (Phase 6b Шаг 0)
+                "time_context": spaces.Box(-1.0, 1.0, shape=(4,), dtype=np.float32),
                 "action_mask": spaces.MultiBinary(self.k),
             }
         )
@@ -101,6 +105,11 @@ class VRPEnv(gym.Env):
         self.current_route = [0]
         return self._obs(), self._info()
 
+    @property
+    def abs_minute(self) -> float:
+        """Абсолютная минута дня для congestion-фазы: offset travel-модели + время тура."""
+        return float(self.travel.offset_min) + float(self.cur_time)
+
     # ---------- feasibility ----------
 
     def _feasible(self, j: int) -> bool:
@@ -132,8 +141,15 @@ class VRPEnv(gym.Env):
         nf[:, 5] = self.service_min
         nf[:, 6] = self.visited
         nf[:, 7] = mask
+        nf[:, 8] = self.travel.node_congestion(self.coords, self.cur_time)  # 0 под free-flow
         vs = np.array([self.pos, self.rem_cap, self.cur_time, self.vehicle_idx], dtype=np.float32)
-        return {"node_features": nf, "vehicle_state": vs, "action_mask": mask}
+        tctx = time_context(self.abs_minute, self.dow)
+        return {
+            "node_features": nf,
+            "vehicle_state": vs,
+            "time_context": tctx,
+            "action_mask": mask,
+        }
 
     def _n_unserved(self) -> int:
         return int((~self.visited[1:]).sum())
