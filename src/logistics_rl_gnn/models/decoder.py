@@ -2,8 +2,8 @@
 
 На каждом шаге: context = [graph_emb, emb(current), rem_cap/Q, cur_time/horizon] → query;
 многоголовый glimpse по эмбеддингам узлов (маскед) уточняет query; финальная
-compatibility = C·tanh(q·k/√d) → маска инфеасибл в −inf → Categorical(logits). K/V узлов
-проецируются ОДИН раз на инстанс (`precompute`), т.к. энкодер статичен во время rollout.
+compatibility = q·k/√d (БЕЗ C·tanh: насыщение зануляло градиент, Phase 6 diag) → маска
+инфеасибл в −inf → Categorical(logits). K/V проецируются ОДИН раз на инстанс (`precompute`).
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ from torch.distributions import Categorical
 
 
 class AttentionDecoder(nn.Module):
-    def __init__(self, d_model: int = 128, heads: int = 8, clip: float = 10.0, ctx_extra: int = 2):
+    def __init__(self, d_model: int = 128, heads: int = 8, ctx_extra: int = 2):
         super().__init__()
         assert d_model % heads == 0
-        self.d, self.h, self.hd, self.clip = d_model, heads, d_model // heads, clip
+        self.d, self.h, self.hd = d_model, heads, d_model // heads
         self.Wq = nn.Linear(2 * d_model + ctx_extra, d_model)  # [graph_emb, emb(cur), 2 скаляра]
         self.Wk_g = nn.Linear(d_model, d_model, bias=False)  # glimpse keys
         self.Wv_g = nn.Linear(d_model, d_model, bias=False)  # glimpse values
@@ -42,9 +42,9 @@ class AttentionDecoder(nn.Module):
         scores = scores.masked_fill(mask.unsqueeze(0) == 0, float("-inf"))
         glimpse = torch.einsum("hn,hnd->hd", torch.softmax(scores, -1), Vg).reshape(self.d)
         qc = self.Wout(glimpse)  # [d]
-        # --- compatibility: tanh-clip ДО маски (иначе C·tanh(−inf)=−C утекает вероятностью) ---
+        # compatibility: сырой scaled dot-product (БЕЗ C·tanh — насыщение tanh зануляло градиент
+        # при росте логитов; у softmax градиент так не исчезает, Phase 6 diag). Маска → −inf.
         logits = torch.matmul(precomp["Kc"], qc) / math.sqrt(self.d)  # [N+1]
-        logits = self.clip * torch.tanh(logits)
         return logits.masked_fill(mask == 0, float("-inf"))
 
     def dist(self, context, precomp: dict, mask) -> Categorical:

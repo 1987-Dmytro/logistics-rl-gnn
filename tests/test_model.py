@@ -65,9 +65,7 @@ def test_masking_infeasible_zero_prob():
 
 def test_overfit_tiny_cost_drops():
     policy = _policy(seed=0)
-    opt = torch.optim.Adam(
-        policy.parameters(), lr=1e-3
-    )  # 1e-2 нестабилен: tanh-clip → uniform-коллапс
+    opt = torch.optim.Adam(policy.parameters(), lr=1e-3)  # стабильный шаг (Phase 5/6 находка)
     env = _tiny_env()  # ТОТ ЖЕ конфиг (fleet=1, t_max=1000) → обе аптеки feasible
 
     def mean_cost(n=16):

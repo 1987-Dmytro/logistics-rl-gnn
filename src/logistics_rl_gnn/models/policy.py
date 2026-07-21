@@ -43,10 +43,10 @@ def build_graph(env, device):
 
 
 class VRPPolicy(nn.Module):
-    def __init__(self, d_model: int = 128, heads: int = 8, n_layers: int = 3, clip: float = 10.0):
+    def __init__(self, d_model: int = 128, heads: int = 8, n_layers: int = 3):
         super().__init__()
         self.encoder = GATEncoder(in_dim=7, d_model=d_model, heads=heads, n_layers=n_layers)
-        self.decoder = AttentionDecoder(d_model=d_model, heads=heads, clip=clip)
+        self.decoder = AttentionDecoder(d_model=d_model, heads=heads)
 
     @property
     def device(self):
@@ -72,7 +72,8 @@ class VRPPolicy(nn.Module):
     def rollout(self, env, mode: str = "sample", seed=None, return_entropy: bool = False):
         """Автогрегрессивный эпизод. -> (routes, sum_logπ [grad], metrics[, mean_entropy]).
 
-        return_entropy=True добавляет 4-м элементом среднюю по шагам энтропию π (страж коллапса).
+        return_entropy=True добавляет 4-м элементом среднюю по шагам энтропию π — ТЕНЗОР с
+        градиентом (страж коллапса + опц. entropy-бонус в loss).
         """
         obs, info = env.reset(seed=seed)
         enc = self.encode(env)
@@ -90,6 +91,6 @@ class VRPPolicy(nn.Module):
         sum_logp = torch.stack(logps).sum() if logps else torch.zeros((), device=self.device)
         metrics = evaluate_solution(info["routes"], env._inst, env._cost_cfg)  # cfg среды
         if return_entropy:
-            mean_ent = torch.stack(ents).mean().item() if ents else 0.0
+            mean_ent = torch.stack(ents).mean() if ents else torch.zeros((), device=self.device)
             return info["routes"], sum_logp, metrics, mean_ent
         return info["routes"], sum_logp, metrics
