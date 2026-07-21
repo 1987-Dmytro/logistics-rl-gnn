@@ -27,6 +27,7 @@ REFERENCE_DATE = date(2024, 1, 1)  # якорь → воспроизводима
 DEMAND_RANGE = (3, 12)  # боксов/стоп
 SERVICE_MIN = 4.0  # мин обслуживания/стоп
 DEFAULT_SEED = 0
+REACH_MARGIN_S = 60.0  # запас достижимости при клипе синтетич. окна (под округление OR-Tools)
 
 # --- флот / стоимость / штрафы (dec-0001 §2-3, [ASSUMED, config]; калибруется Phase 4) ---
 FLEET_SIZE = 8  # K машин (калибровка: 6→8, чтобы K*Q покрывал спрос)
@@ -98,18 +99,28 @@ def real_day_window(oh_string, day_start: datetime, day_end: datetime):
     return "CLOSED", None, None
 
 
-def _synthetic_window(rng: np.random.Generator, horizon_s: int) -> tuple[float, float]:
-    """Сид-синтетическое окно [e,l] сек, e<l, в пределах горизонта (ASSUMED)."""
+def _synthetic_window(
+    rng: np.random.Generator, horizon_s: int, e_max: float | None = None
+) -> tuple[float, float]:
+    """Сид-синтетическое окно [e,l] сек, e<l, в пределах горизонта (ASSUMED).
+
+    e_max — верхний предел раннего окна по достижимости в T_max (клип e вниз, чтобы
+    ASSUMED-плейсхолдер не сделал реальную аптеку структурно неохватной); None → без клипа.
+    Клип пост-розыгрыша → rng-поток не меняется (feasible-окна остаются как были).
+    """
     e = float(rng.uniform(0.0, 0.4 * horizon_s))
     width = float(rng.uniform(0.3 * horizon_s, 0.6 * horizon_s))
+    if e_max is not None:
+        e = min(e, max(0.0, e_max))  # не позже, чем успеть подождать/обслужить/вернуться
     return e, min(float(horizon_s), e + width)
 
 
-def stop_window(oh_string, delivery_weekday: int, rng: np.random.Generator):
+def stop_window(oh_string, delivery_weekday: int, rng: np.random.Generator, e_max=None):
     """(source, e_s, l_s) для одного стопа. source: REAL | ASSUMED | EXCLUDED.
 
     e_s,l_s — сек от episode_start (депо open); EXCLUDED → (None, None). rng тратится
-    только на ASSUMED-ветку.
+    только на ASSUMED-ветку. e_max клипит ТОЛЬКО синтетику (реальные окна не трогаем —
+    запрет №5); реальные окна снапшота достижимы (проверено стражем).
     """
     day_start, day_end, episode_start, horizon_s = _day_bounds(delivery_weekday)
     status, fo, lc = real_day_window(oh_string, day_start, day_end)
@@ -121,7 +132,7 @@ def stop_window(oh_string, delivery_weekday: int, rng: np.random.Generator):
         if l_s > e_s:  # открыта в пределах диспетч-окна
             return "REAL", e_s, l_s
         # открыта, но вне диспетч-окна → синтетика
-    e_s, l_s = _synthetic_window(rng, horizon_s)
+    e_s, l_s = _synthetic_window(rng, horizon_s, e_max)
     return "ASSUMED", e_s, l_s
 
 
@@ -132,12 +143,13 @@ def _latest_snapshot_dir():
     return dirs[-1] if dirs else None
 
 
-def _check_feasibility(demand, service, time_m) -> None:
+def _check_feasibility(demand, service, time_m, win_e) -> None:
     """Страж инстанса (пойманный баг Phase 3 → постоянная проверка).
 
     raise если суммарный спрос > K*Q (инфеасибл); warn если утилизация > 0.9;
-    assert достижимости каждой аптеки: депо→i→депо + сервис <= T_max.
-    demand/service — списки (депо = индекс 0); time_m — сек.
+    assert достижимости каждой аптеки С УЧЁТОМ ОЖИДАНИЯ до e_i: машина стартует в t=0,
+    ждёт до e_i, обслуживает, возвращается — max(t[0,i], e_i)+service+t[i,0] <= T_max.
+    demand/service/win_e — списки (депо = индекс 0); time_m — сек.
     """
     cap = FLEET_SIZE * VEHICLE_CAP
     total = float(sum(demand))
@@ -151,10 +163,10 @@ def _check_feasibility(demand, service, time_m) -> None:
         )
     t_max_s = T_MAX_MIN * 60.0
     for i in range(1, len(demand)):  # 0 = депо
-        round_trip = float(time_m[0, i] + service[i] + time_m[i, 0])
-        assert round_trip <= t_max_s, (
-            f"аптека #{i} недостижима в T_max: депо→i→депо+сервис = "
-            f"{round_trip / 60:.1f} > {T_MAX_MIN} мин"
+        reach = max(float(time_m[0, i]), float(win_e[i])) + float(service[i]) + float(time_m[i, 0])
+        assert reach <= t_max_s + 1e-6, (
+            f"аптека #{i} недостижима в T_max с ожиданием до e: "
+            f"{reach / 60:.1f} > {T_MAX_MIN} мин (e={win_e[i] / 60:.1f})"
         )
 
 
@@ -170,6 +182,8 @@ def generate_instance(
     snap = snap_mod.load_snapshot(d, with_graph=False)
     _, _, episode_start, horizon_s = _day_bounds(delivery_weekday)
     rng = np.random.default_rng(seed)
+    depot_stop = int(snap.nodes.loc[snap.nodes.kind == "depot", "stop"].iloc[0])
+    t_max_s = T_MAX_MIN * 60.0
 
     included: list[int] = []
     excluded: list[int] = []
@@ -195,7 +209,10 @@ def generate_instance(
             demand.append(0)
             service.append(0.0)
             continue
-        src, e_s, l_s = stop_window(row.opening_hours, delivery_weekday, rng)
+        # бюджет раннего окна: успеть подождать до e, обслужить и вернуться в депо в T_max
+        ret_s = float(snap.time_matrix[stop_i, depot_stop])
+        e_max = t_max_s - SERVICE_MIN * 60.0 - ret_s - REACH_MARGIN_S
+        src, e_s, l_s = stop_window(row.opening_hours, delivery_weekday, rng, e_max=e_max)
         if src == "EXCLUDED":
             excluded.append(stop_i)
             continue
@@ -211,7 +228,7 @@ def generate_instance(
 
     idx = np.array(included)
     time_m = snap.time_matrix[np.ix_(idx, idx)]
-    _check_feasibility(demand, service, time_m)  # страж: инстанс обслуживаем и достижим
+    _check_feasibility(demand, service, time_m, win_e)  # страж: обслуживаем и достижим
     return Instance(
         node_ids=node_ids,
         snapshot_stops=included,
