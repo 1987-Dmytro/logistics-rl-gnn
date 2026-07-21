@@ -34,6 +34,10 @@ env = [
     "gymnasium>=1.0",
     "opening_hours_py",  # парсинг OSM opening_hours (Rust-биндинг; модуль обычно opening_hours)
 ]
+# Phase 4: бейзлайны (честное «Было»). OR-Tools CVRPTW; greedy — без доп. депов.
+baselines = [
+    "ortools>=9.10",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
