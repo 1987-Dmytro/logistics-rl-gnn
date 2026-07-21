@@ -12,14 +12,18 @@ from logistics_rl_gnn.env.travel import time_context
 from logistics_rl_gnn.models.decoder import AttentionDecoder
 from logistics_rl_gnn.models.encoder import GATEncoder
 
+_MULT_CAP = 10.0  # потолок congestion-множителя (закрытие → «≈блокировано», а не inf)
+
 
 def build_graph(env, device):
     """Статический нормализованный граф инстанса из env-данных (single source).
 
     Узлы (8): [x, y, demand/Q, e/H, l/H, service/T_max, is_depot, node_congestion].
-    Рёбра: полный граф; edge_attr = travel_time(i,j, cur_time) АКТИВНОЙ модели (норм.) — под
-    free-flow == прежнее free-flow-время (паритет). -> (node_feat [k,8], edge_index [2,E],
-    edge_attr [E,1]) на device.
+    Рёбра (edge_attr [E,2]): [0] travel_time(i,j,cur_time) АКТИВНОЙ модели, per-instance
+    max-норма (топология; под free-flow == прежнее значение); [1] congestion_multiplier =
+    travel/free_flow = c·(1+ΣI) — под free-flow ≡1, но делает диурнал/инцидент видимыми
+    ПО-РЁБЕРНО (закрывает нюанс 0005: max-норма стирала равномерный диурнал в канале 0).
+    -> (node_feat [k,8], edge_index [2,E], edge_attr [E,2]) на device.
     """
     k = env.k
     coord = torch.as_tensor(env.coords, dtype=torch.float32)  # [k, 2] (lon, lat)
@@ -45,15 +49,21 @@ def build_graph(env, device):
     )
     # congestion-aware travel-матрица (снимок в cur_time); под FreeFlow == env.time_m (паритет).
     # ponytail: k² вызовов travel.time на encode; при POMO-ретрейне (k=62) — векторизовать матрицей.
+    ff = torch.as_tensor(env.time_m, dtype=torch.float32)  # free-flow t0 [k,k] мин
     tm = torch.tensor(
         [[env.travel.time(i, j, env.cur_time) for j in range(k)] for i in range(k)],
         dtype=torch.float32,
     )
-    if torch.isinf(tm).any():  # закрытие → крупный конечный «очень медленно» (без NaN в норме)
+    # канал 1: множитель travel/ff (≡1 под free-flow). diag ff=0 → 1; закрытие (inf) → cap.
+    mult = torch.where(ff > 0, tm / ff.clamp_min(1e-8), torch.ones_like(ff))
+    mult = torch.where(torch.isinf(mult), torch.full_like(mult, _MULT_CAP), mult)
+    mult = mult.clamp_max(_MULT_CAP)
+    if torch.isinf(tm).any():  # канал 0: закрытие → крупный конечный «очень медленно» (без NaN)
         tm = torch.where(torch.isinf(tm), tm[torch.isfinite(tm)].max() * 3.0, tm)
     idx = torch.arange(k)
     edge_index = torch.stack([idx.repeat_interleave(k), idx.repeat(k)])  # полный граф [2, k*k]
-    edge_attr = tm.reshape(-1, 1) / (tm.max() + 1e-8)  # travel_time норм. [k*k, 1]
+    ea0 = tm.reshape(-1, 1) / (tm.max() + 1e-8)  # travel_time норм. (топология)
+    edge_attr = torch.cat([ea0, mult.reshape(-1, 1)], dim=1)  # [k*k, 2]
     return node_feat.to(device), edge_index.to(device), edge_attr.to(device)
 
 

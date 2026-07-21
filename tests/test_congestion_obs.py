@@ -90,37 +90,42 @@ def _policy(seed=0):
 
 
 def test_build_graph_parity_freeflow():
-    """Паритет: под free-flow edge_attr == прежней free-flow-норме (бит-в-бит), node_cong≡0."""
+    """Паритет free-flow: канал 0 == прежней норме (бит-в-бит), канал 1 ≡1, node_cong≡0."""
     env = _tiny_env()
     env.reset(seed=0)
     node_feat, ei, ea = build_graph(env, torch.device("cpu"))
     assert node_feat.shape == (env.k, 8)
+    assert ea.shape == (env.k * env.k, 2)  # 2 канала: travel-норма + congestion-множитель
     tm = torch.as_tensor(env.time_m, dtype=torch.float32)
-    ea_old = tm.reshape(-1, 1) / (tm.max() + 1e-8)  # прежняя формула на free-flow-матрице
-    assert torch.equal(ea, ea_old)  # congestion-aware путь под free-flow не сдвинул edge_attr
+    ea0_old = tm.reshape(-1) / (tm.max() + 1e-8)  # прежняя формула (канал 0)
+    assert torch.equal(ea[:, 0], ea0_old)  # канал 0 под free-flow не сдвинулся
+    assert torch.all(ea[:, 1] == 1.0)  # канал 1 (множитель) ≡1 под free-flow (нейтрален)
     assert torch.all(node_feat[:, 7] == 0.0)  # node_congestion (столбец 7) нейтрален
 
 
-def test_edge_attr_carries_incident_not_diurnal():
-    """edge_attr = ИНЦИДЕНТ-aware: локальный инцидент сдвигает рёбра, а равномерный диурнал —
-    нет (per-instance max-норма сокращает city-wide c). rush-hour доходит через time-context."""
+def test_edge_channels_carry_congestion():
+    """2 edge-канала (Phase 6b Шаг 1, закрывает нюанс 0005): канал 0 (travel-норма) стирает
+    равномерный диурнал (топология, max-норма), канал 1 (множитель travel/ff) ЕГО показывает.
+    Локальный инцидент сдвигает и канал 0 (переживает max-норму)."""
     inst = _tiny_instance()
     env_ff = _tiny_env()
     env_ff.reset(seed=0)
     _, _, ea_ff = build_graph(env_ff, torch.device("cpu"))
-    # чистый диурнал (без инцидентов, час 8 → c=1.30) == free-flow (диурнал нормируется прочь)
+    # чистый диурнал (без инцидентов, час 8 → c=1.30)
     ct = CongestionTravel(inst.time_matrix / 60.0, inst.coords, dow=1)
     from logistics_rl_gnn.env.events import make_dynamic_env
 
     dv = make_dynamic_env(inst, travel=ct, fleet_size=1, t_max_min=1000.0)
     dv.reset(seed=0)
     _, _, ea_diur = build_graph(dv, torch.device("cpu"))
-    assert torch.equal(ea_diur, ea_ff)  # диурнал сокращается в max-норме
-    # локальный инцидент → рёбра СДВИГАЮТСЯ (канал живой)
+    assert torch.equal(ea_diur[:, 0], ea_ff[:, 0])  # канал 0: диурнал сокращается (топология)
+    off = ea_diur[:, 1][ea_diur[:, 1] != 1.0]  # недиагональные множители (diag=1)
+    assert off.numel() > 0 and torch.allclose(off, torch.full_like(off, 1.30), atol=1e-4)  # =c(8)
+    # локальный инцидент → канал 0 СДВИГАЕТСЯ (переживает max-норму)
     env_inc, _ = _incident_env(closure=False)
     env_inc.reset(seed=0)
     _, _, ea_inc = build_graph(env_inc, torch.device("cpu"))
-    assert not torch.equal(ea_inc, ea_ff)
+    assert not torch.equal(ea_inc[:, 0], ea_ff[:, 0])
 
 
 def test_forward_no_nan_under_closure():
@@ -129,6 +134,8 @@ def test_forward_no_nan_under_closure():
     env, _ = _incident_env(closure=True)
     obs, _ = env.reset(seed=0)
     node_embs, graph_emb, _ = enc = policy.encode(env)
+    _, _, ea = build_graph(env, torch.device("cpu"))
+    assert torch.isfinite(ea).all()  # оба edge-канала конечны под закрытием (inf→cap/сентинел)
     assert torch.isfinite(node_embs).all()  # inf→сентинел в build_graph отработал
     assert torch.isfinite(graph_emb).all()
     dist = policy.action_dist(env, obs, enc)

@@ -2,9 +2,9 @@
 инстанс, декодер потом ходит по узлам автогрегрессивно.
 
 Вход — нормализованные признаки узла [x, y, demand/Q, e/horizon, l/horizon, service/T_max,
-is_depot, node_congestion] (8) и рёбра полного графа с edge_attr = travel_time АКТИВНОЙ модели
-(норм.; под free-flow == free-flow-время → паритет). Выход — эмбеддинги узлов [N+1, d_model] +
-graph_emb (mean-pool). Device-agnostic (обычный nn.Module).
+is_depot, node_congestion] (8) и рёбра полного графа с edge_attr (2): [0] travel_time АКТИВНОЙ
+модели (норм.), [1] congestion_multiplier travel/free_flow (≡1 под free-flow). Выход —
+эмбеддинги узлов [N+1, d_model] + graph_emb (mean-pool). Device-agnostic (обычный nn.Module).
 """
 
 from __future__ import annotations
@@ -15,19 +15,26 @@ from torch_geometric.nn import GATv2Conv
 
 
 class GATEncoder(nn.Module):
-    def __init__(self, in_dim: int = 8, d_model: int = 128, heads: int = 8, n_layers: int = 3):
+    def __init__(
+        self,
+        in_dim: int = 8,
+        d_model: int = 128,
+        heads: int = 8,
+        n_layers: int = 3,
+        edge_dim: int = 2,
+    ):
         super().__init__()
         assert d_model % heads == 0, "d_model должен делиться на heads"
         self.in_proj = nn.Linear(in_dim, d_model)
         # concat=True + out=d_model//heads → выход ровно d_model; self-loops не добавляем
-        # (полный граф уже содержит диагональ (i,i) с edge_attr=0).
+        # (полный граф уже содержит диагональ (i,i)). edge_dim=2: travel-норма + congestion-множ.
         self.convs = nn.ModuleList(
             GATv2Conv(
                 d_model,
                 d_model // heads,
                 heads=heads,
                 concat=True,
-                edge_dim=1,
+                edge_dim=edge_dim,
                 add_self_loops=False,
                 residual=False,
             )
