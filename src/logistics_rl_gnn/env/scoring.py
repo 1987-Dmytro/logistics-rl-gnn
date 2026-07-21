@@ -29,13 +29,16 @@ class CostConfig:
     p_unserved: float = _im.PENALTY_UNSERVED
 
 
-def evaluate_solution(routes, instance, cfg: CostConfig) -> dict:
+def evaluate_solution(routes, instance, cfg: CostConfig, travel=None) -> dict:
     """Стоимость решения ЕДИНОЙ формулой VRPEnv.
 
     -> {distance_km, time_min, vehicles_used, on_time_pct, unserved, reward}.
     reward = −(c_f·машин + c_d·пробег + c_t·время/60 + p_late·опоздание + p_unserved·необслуж).
+    travel=None → free-flow (Phase 3, time_matrix). travel=TravelModel (Phase 7) → время в пути
+    зависит от момента отправления t (congestion): dt = travel.time(a,b,t). Пробег НЕ зависит от
+    congestion (distance = distance). Момент t в минутах от старта тура (как at_minute).
     """
-    time_m = np.asarray(instance.time_matrix, dtype=float) / 60.0  # сек→мин
+    time_m = np.asarray(instance.time_matrix, dtype=float) / 60.0  # сек→мин (free-flow фолбэк)
     dist_km = np.asarray(instance.dist_matrix, dtype=float) / 1000.0  # м→км
     win = np.asarray(instance.windows, dtype=float) / 60.0  # сек→мин
     service = np.asarray(instance.service, dtype=float) / 60.0  # сек→мин
@@ -52,9 +55,10 @@ def evaluate_solution(routes, instance, cfg: CostConfig) -> dict:
         t = 0.0  # каждая машина стартует в депо при cur_time=0
         for a, b in zip(route[:-1], route[1:], strict=False):
             total_km += dist_km[a, b]
-            arrival = t + time_m[a, b]
+            dt = float(travel.time(a, b, t)) if travel is not None else float(time_m[a, b])
+            arrival = t + dt
             if b == 0:  # возврат в депо: без окна/сервиса, но время в пути платим
-                total_time += time_m[a, b]
+                total_time += dt
                 t = arrival
                 continue
             wait = max(0.0, win[b, 0] - arrival)  # ждём до раннего окна e_b
@@ -62,7 +66,7 @@ def evaluate_solution(routes, instance, cfg: CostConfig) -> dict:
             late_min += late
             n_visits += 1
             on_time += int(late <= 1e-9)
-            total_time += time_m[a, b] + wait + service[b]
+            total_time += dt + wait + service[b]
             t = arrival + wait + service[b]
             served.add(b)
 
