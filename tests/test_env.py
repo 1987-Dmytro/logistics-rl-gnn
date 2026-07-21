@@ -62,6 +62,29 @@ def test_tiny_reward():
     assert info["routes"] == [[0, 1, 2, 0]]
 
 
+def test_dense_matches_sparse_total():
+    # dense раздаёт variable по шагам, sparse — терминалом; суммарный reward эпизода
+    # ОДИНАКОВ и равен единому evaluate_solution (одна формула, разное credit-assignment)
+    from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution
+
+    def rollout(dense):
+        env = _tiny_env(dense_reward=dense)
+        env.reset(seed=0)
+        total, info = 0.0, {}
+        for a in (1, 2):
+            _, r, term, trunc, info = env.step(a)
+            total += r
+            if term or trunc:
+                break
+        return total, info["routes"]
+
+    tot_sparse, routes = rollout(False)
+    tot_dense, _ = rollout(True)
+    expected = evaluate_solution(routes, _tiny_instance(), CostConfig())["reward"]
+    assert tot_sparse == pytest.approx(expected)
+    assert tot_dense == pytest.approx(expected)
+
+
 def test_invalid_action_terminates():
     env = _tiny_env()
     env.reset(seed=0)

@@ -96,6 +96,7 @@ class VRPEnv(gym.Env):
         self.total_km = 0.0
         self.total_time_min = 0.0
         self.total_late_min = 0.0
+        self._emitted = 0.0  # сумма розданных per-step reward (dense); терминал добирает остаток
         self.routes: list[list[int]] = []
         self.current_route = [0]
         return self._obs(), self._info()
@@ -209,20 +210,17 @@ class VRPEnv(gym.Env):
             reward = self._terminal_reward()
         elif self.dense:
             reward = -(self.c_d * step_km + self.c_t * step_time / 60.0)
+            self._emitted += reward  # копим розданное → терминал добирает остаток
         else:
             reward = 0.0
         return self._obs(), float(reward), terminated, truncated, self._info()
 
     def _terminal_reward(self) -> float:
-        if self.dense:  # дистанция/время уже роздано по шагам → терминал = только fixed
-            fixed = (
-                self.c_f * self.vehicles_used
-                + self.p_unserved * self._n_unserved()
-                + self.p_late * self.total_late_min
-            )
-            return -fixed
-        # sparse: единый оценщик по накопленным маршрутам (та же формула, что у бейзлайнов)
-        return evaluate_solution(self.routes, self._inst, self._cost_cfg)["reward"]
+        # единый оценщик = источник истины для sparse И dense (та же формула, что у бейзлайнов).
+        # dense роздал variable по шагам → терминал добирает остаток (total − уже_выданное), так что
+        # суммарный reward эпизода == total в любом режиме; sparse: _emitted=0 → terminal=total.
+        total = evaluate_solution(self.routes, self._inst, self._cost_cfg)["reward"]
+        return total - self._emitted
 
     # ---------- helper ----------
 
