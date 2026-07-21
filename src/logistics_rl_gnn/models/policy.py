@@ -1,0 +1,86 @@
+"""VRPPolicy — связка энкодер+декодер с VRPEnv (Phase 5). БЕЗ train-loop (это Phase 6):
+только forward + rollout. Феасибилити — из env.action_mask (single source of truth).
+"""
+
+from __future__ import annotations
+
+import torch
+import torch.nn as nn
+
+from logistics_rl_gnn.env.scoring import evaluate_solution
+from logistics_rl_gnn.models.decoder import AttentionDecoder
+from logistics_rl_gnn.models.encoder import GATEncoder
+
+
+def build_graph(env, device):
+    """Статический нормализованный граф инстанса из env-данных (single source).
+
+    -> (node_feat [N+1, 7], edge_index [2, E], edge_attr [E, 1]) на device. Полный граф.
+    """
+    k = env.k
+    coord = torch.as_tensor(env.coords, dtype=torch.float32)  # [k, 2] (lon, lat)
+    cmin, cmax = coord.amin(0), coord.amax(0)
+    coord = (coord - cmin) / (cmax - cmin + 1e-8)  # per-instance min-max → [0,1]
+    horizon = env._inst.horizon_s / 60.0  # мин
+    win = torch.as_tensor(env.win, dtype=torch.float32)  # [k, 2] мин
+    node_feat = torch.stack(
+        [
+            coord[:, 0],
+            coord[:, 1],
+            torch.as_tensor(env.demand, dtype=torch.float32) / env.Q,
+            win[:, 0] / horizon,
+            win[:, 1] / horizon,
+            torch.as_tensor(env.service_min, dtype=torch.float32) / env.t_max_min,
+            torch.tensor([1.0] + [0.0] * (k - 1)),  # is_depot (узел 0 = депо)
+        ],
+        dim=1,
+    )
+    tm = torch.as_tensor(env.time_m, dtype=torch.float32)  # [k, k] мин
+    idx = torch.arange(k)
+    edge_index = torch.stack([idx.repeat_interleave(k), idx.repeat(k)])  # полный граф [2, k*k]
+    edge_attr = tm.reshape(-1, 1) / (tm.max() + 1e-8)  # travel_time норм. [k*k, 1]
+    return node_feat.to(device), edge_index.to(device), edge_attr.to(device)
+
+
+class VRPPolicy(nn.Module):
+    def __init__(self, d_model: int = 128, heads: int = 8, n_layers: int = 3, clip: float = 10.0):
+        super().__init__()
+        self.encoder = GATEncoder(in_dim=7, d_model=d_model, heads=heads, n_layers=n_layers)
+        self.decoder = AttentionDecoder(d_model=d_model, heads=heads, clip=clip)
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
+    def encode(self, env):
+        """Один прогон энкодера на инстанс → (node_embs, graph_emb, precomp декодера)."""
+        node_feat, ei, ea = build_graph(env, self.device)
+        node_embs, graph_emb = self.encoder(node_feat, ei, ea)
+        return node_embs, graph_emb, self.decoder.precompute(node_embs)
+
+    def action_dist(self, env, obs, enc) -> torch.distributions.Categorical:
+        """Распределение π(a|s) в текущем состоянии env. enc = (node_embs, graph_emb, precomp)."""
+        node_embs, graph_emb, precomp = enc
+        horizon = env._inst.horizon_s / 60.0
+        mask = torch.as_tensor(obs["action_mask"], dtype=torch.float32, device=self.device)
+        dyn = torch.tensor(
+            [env.rem_cap / env.Q, env.cur_time / horizon], dtype=torch.float32, device=self.device
+        )
+        context = torch.cat([graph_emb, node_embs[env.pos], dyn])
+        return self.decoder.dist(context, precomp, mask)
+
+    def rollout(self, env, mode: str = "sample", seed=None):
+        """Автогрегрессивный эпизод. -> (routes, sum_logπ [grad], metrics via evaluate_solution)."""
+        obs, info = env.reset(seed=seed)
+        enc = self.encode(env)
+        logps = []
+        done = False
+        while not done:
+            dist = self.action_dist(env, obs, enc)
+            a = dist.probs.argmax() if mode == "greedy" else dist.sample()
+            logps.append(dist.log_prob(a))
+            obs, _, term, trunc, info = env.step(int(a.item()))
+            done = term or trunc
+        sum_logp = torch.stack(logps).sum() if logps else torch.zeros((), device=self.device)
+        metrics = evaluate_solution(info["routes"], env._inst, env._cost_cfg)  # cfg среды
+        return info["routes"], sum_logp, metrics
