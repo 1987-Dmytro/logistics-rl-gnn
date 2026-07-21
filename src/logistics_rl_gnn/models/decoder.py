@@ -1,6 +1,7 @@
 """Attention-декодер (автогрегрессивный, Kool-style, Phase 5).
 
-На каждом шаге: context = [graph_emb, emb(current), rem_cap/Q, cur_time/horizon] → query;
+На каждом шаге: context = [graph_emb, emb(current), rem_cap/Q, cur_time/horizon, time_context(4)]
+→ query (time_context = sin/cos часа + sin/cos дня недели, Phase 6b Шаг 0);
 многоголовый glimpse по эмбеддингам узлов (маскед) уточняет query; финальная
 compatibility = q·k/√d (БЕЗ C·tanh: насыщение зануляло градиент, Phase 6 diag) → маска
 инфеасибл в −inf → Categorical(logits). K/V проецируются ОДИН раз на инстанс (`precompute`).
@@ -16,11 +17,12 @@ from torch.distributions import Categorical
 
 
 class AttentionDecoder(nn.Module):
-    def __init__(self, d_model: int = 128, heads: int = 8, ctx_extra: int = 2):
+    def __init__(self, d_model: int = 128, heads: int = 8, ctx_extra: int = 6):
         super().__init__()
         assert d_model % heads == 0
         self.d, self.h, self.hd = d_model, heads, d_model // heads
-        self.Wq = nn.Linear(2 * d_model + ctx_extra, d_model)  # [graph_emb, emb(cur), 2 скаляра]
+        # ctx_extra=6: rem_cap/Q, cur_time/horizon + time_context(4). Меняешь состав → правь здесь.
+        self.Wq = nn.Linear(2 * d_model + ctx_extra, d_model)  # [graph_emb, emb(cur), 6 скаляров]
         self.Wk_g = nn.Linear(d_model, d_model, bias=False)  # glimpse keys
         self.Wv_g = nn.Linear(d_model, d_model, bias=False)  # glimpse values
         self.Wout = nn.Linear(d_model, d_model, bias=False)  # glimpse output-проекция

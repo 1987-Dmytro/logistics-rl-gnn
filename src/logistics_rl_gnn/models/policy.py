@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 
 from logistics_rl_gnn.env.scoring import evaluate_solution
+from logistics_rl_gnn.env.travel import time_context
 from logistics_rl_gnn.models.decoder import AttentionDecoder
 from logistics_rl_gnn.models.encoder import GATEncoder
 
@@ -15,7 +16,10 @@ from logistics_rl_gnn.models.encoder import GATEncoder
 def build_graph(env, device):
     """Статический нормализованный граф инстанса из env-данных (single source).
 
-    -> (node_feat [N+1, 7], edge_index [2, E], edge_attr [E, 1]) на device. Полный граф.
+    Узлы (8): [x, y, demand/Q, e/H, l/H, service/T_max, is_depot, node_congestion].
+    Рёбра: полный граф; edge_attr = travel_time(i,j, cur_time) АКТИВНОЙ модели (норм.) — под
+    free-flow == прежнее free-flow-время (паритет). -> (node_feat [k,8], edge_index [2,E],
+    edge_attr [E,1]) на device.
     """
     k = env.k
     coord = torch.as_tensor(env.coords, dtype=torch.float32)  # [k, 2] (lon, lat)
@@ -23,6 +27,9 @@ def build_graph(env, device):
     coord = (coord - cmin) / (cmax - cmin + 1e-8)  # per-instance min-max → [0,1]
     horizon = env._inst.horizon_s / 60.0  # мин
     win = torch.as_tensor(env.win, dtype=torch.float32)  # [k, 2] мин
+    nc = torch.as_tensor(  # уровень congestion у узла (0 под free-flow → паритет)
+        env.travel.node_congestion(env.coords, env.cur_time), dtype=torch.float32
+    )
     node_feat = torch.stack(
         [
             coord[:, 0],
@@ -32,10 +39,18 @@ def build_graph(env, device):
             win[:, 1] / horizon,
             torch.as_tensor(env.service_min, dtype=torch.float32) / env.t_max_min,
             torch.tensor([1.0] + [0.0] * (k - 1)),  # is_depot (узел 0 = депо)
+            nc,
         ],
         dim=1,
     )
-    tm = torch.as_tensor(env.time_m, dtype=torch.float32)  # [k, k] мин
+    # congestion-aware travel-матрица (снимок в cur_time); под FreeFlow == env.time_m (паритет).
+    # ponytail: k² вызовов travel.time на encode; при POMO-ретрейне (k=62) — векторизовать матрицей.
+    tm = torch.tensor(
+        [[env.travel.time(i, j, env.cur_time) for j in range(k)] for i in range(k)],
+        dtype=torch.float32,
+    )
+    if torch.isinf(tm).any():  # закрытие → крупный конечный «очень медленно» (без NaN в норме)
+        tm = torch.where(torch.isinf(tm), tm[torch.isfinite(tm)].max() * 3.0, tm)
     idx = torch.arange(k)
     edge_index = torch.stack([idx.repeat_interleave(k), idx.repeat(k)])  # полный граф [2, k*k]
     edge_attr = tm.reshape(-1, 1) / (tm.max() + 1e-8)  # travel_time норм. [k*k, 1]
@@ -45,7 +60,7 @@ def build_graph(env, device):
 class VRPPolicy(nn.Module):
     def __init__(self, d_model: int = 128, heads: int = 8, n_layers: int = 3):
         super().__init__()
-        self.encoder = GATEncoder(in_dim=7, d_model=d_model, heads=heads, n_layers=n_layers)
+        self.encoder = GATEncoder(in_dim=8, d_model=d_model, heads=heads, n_layers=n_layers)
         self.decoder = AttentionDecoder(d_model=d_model, heads=heads)
 
     @property
@@ -66,7 +81,10 @@ class VRPPolicy(nn.Module):
         dyn = torch.tensor(
             [env.rem_cap / env.Q, env.cur_time / horizon], dtype=torch.float32, device=self.device
         )
-        context = torch.cat([graph_emb, node_embs[env.pos], dyn])
+        tctx = torch.as_tensor(  # time-context (congestion-фаза): под free-flow — постоянный вход
+            time_context(env.abs_minute, env.dow), dtype=torch.float32, device=self.device
+        )
+        context = torch.cat([graph_emb, node_embs[env.pos], dyn, tctx])
         return self.decoder.dist(context, precomp, mask)
 
     def rollout(self, env, mode: str = "sample", seed=None, return_entropy: bool = False):
