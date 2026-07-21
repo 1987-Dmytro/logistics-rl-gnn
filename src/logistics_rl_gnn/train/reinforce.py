@@ -1,9 +1,11 @@
 """REINFORCE с rollout-baseline (Kool, Phase 6).
 
 baseline = замороженная копия политики (greedy на ТЕХ ЖЕ инстансах). advantage = стоимость
-sample-текущей − greedy-baseline (paired). loss = mean(advantage · Σlogπ) — знак +Σlogπ (вывод:
-∇L=E[(cost−b)∇Σlogπ]=∇E[cost], градиентный спуск ↓cost; спек-формула −Σlogπ дала бы ↑cost).
+sample-текущей − greedy-baseline (paired), НОРМИРУЕТСЯ (mean0/std1) — иначе гигантский масштаб
+(all-depot baseline) вгонял softmax в насыщение за 1 эпоху (Phase 6 diag). loss = mean(adv · Σlogπ)
+— знак +Σlogπ (∇L=E[(cost−b)∇Σlogπ]=∇E[cost], спуск ↓cost; спек-формула −Σlogπ дала бы ↑cost).
 Каждую эпоху paired t-test greedy-current vs greedy-baseline на val → значимо лучше ⇒ апдейт.
+Runtime-страж: grad_norm≈0 несколько эпох подряд (насыщение) → обрыв прогона (не 100 эпох впустую).
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ from logistics_rl_gnn.baselines.greedy import greedy_routes
 from logistics_rl_gnn.env.scoring import evaluate_solution
 from logistics_rl_gnn.env.vrp_env import VRPEnv
 from logistics_rl_gnn.train.instance_sampler import InstanceSampler
+
+_FREEZE_PATIENCE = 3  # эпох подряд с grad_norm≈0 → обрыв прогона (страж коллапса)
 
 
 def make_env(instance) -> VRPEnv:
@@ -66,15 +70,19 @@ class Trainer:
         bl = torch.tensor(
             [_greedy_cost(self.baseline, e) for e in envs]
         )  # baseline greedy (paired)
-        adv = (torch.tensor(costs) - bl).detach()  # cost_sample − cost_baseline
+        adv = torch.tensor(costs) - bl  # cost_sample − cost_baseline
+        adv = ((adv - adv.mean()) / (adv.std() + 1e-8)).detach()  # нормализация: ограничить ‖grad‖
+        mean_ent = torch.stack(ents).mean()
         loss = (adv * torch.stack(logps)).mean()  # +Σlogπ → спуск ↓cost
+        if self.cfg.entropy_beta:  # резерв: −β·H макс. энтропию (против переострения softmax)
+            loss = loss - self.cfg.entropy_beta * mean_ent
         self.opt.zero_grad()
         loss.backward()
         gnorm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.cfg.grad_clip)
         self.opt.step()
         return {
             "cost": float(np.mean(costs)),
-            "entropy": float(np.mean(ents)),
+            "entropy": float(mean_ent.detach()),
             "grad_norm": float(gnorm),
         }
 
@@ -98,7 +106,7 @@ class Trainer:
     def fit(self, log_fn=None) -> list[dict]:
         rng = np.random.default_rng(self.cfg.seed)
         torch.manual_seed(self.cfg.seed)
-        best, history = float("inf"), []
+        best, history, frozen = float("inf"), [], 0
         for epoch in range(self.cfg.epochs):
             ep = [
                 self.train_batch(rng.integers(*self.cfg.train_range, size=self.cfg.batch))
@@ -119,4 +127,11 @@ class Trainer:
                     torch.save(self.policy.state_dict(), self.cfg.ckpt)
             if log_fn:
                 log_fn(rec)
+            # runtime-страж коллапса: |g|≈0 = насыщение (Phase 6). Обрыв на epoch ~3, НЕ 100.
+            frozen = frozen + 1 if rec["grad_norm"] < 1e-6 else 0
+            if frozen >= _FREEZE_PATIENCE:
+                raise RuntimeError(
+                    f"обучение заморожено: grad_norm≈0 {frozen} эпох подряд (насыщение/коллапс) "
+                    f"— прогон прерван на epoch {epoch} (не {self.cfg.epochs})"
+                )
         return history
