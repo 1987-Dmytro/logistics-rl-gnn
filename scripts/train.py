@@ -70,7 +70,7 @@ def main() -> None:
     else:
         print(f"  RL «Стало» : {stalo:7.1f} €  (нет baselines.json — запусти run_baselines.py)")
     if args.smoke:
-        print("  [smoke: 2 эпохи — число иллюстративно; реальное «Стало» — полный прогон]")
+        print("  [smoke: короткий прогон — число иллюстративно; реальное «Стало» — полный прогон]")
 
 
 if __name__ == "__main__":

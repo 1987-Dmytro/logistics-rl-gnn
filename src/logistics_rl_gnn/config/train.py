@@ -16,6 +16,7 @@ class TrainConfig:
     train_range: tuple[int, int] = (0, 100_000)  # диапазон train-сидов A
     val_range: tuple[int, int] = (1_000_000, 1_000_048)  # val-сиды B (непересекающийся с A)
     baseline_p: float = 0.05  # порог paired t-test для обновления rollout-baseline
+    entropy_beta: float = 0.0  # бонус +β·H в резерве (вкл, если softmax переострится без tanh-clip)
     seed: int = 0
     ckpt: str | None = "results/policy_best.pt"  # лучшая по val (вне git: results/ + *.pt)
     eval_seeds: tuple[int, ...] = tuple(range(10))  # full-62 сиды для «Стало» (== «Было» Phase 4)
@@ -25,9 +26,9 @@ class TrainConfig:
 
     @classmethod
     def smoke(cls) -> TrainConfig:
-        # мелко и быстро (<30с): малые инстансы, 2 эпохи × 20 шагов = 40 апдейтов
+        # мелко и быстро: малые инстансы, ≥5 эпох (ловит коллапс, что прятался до 100)
         return cls(
-            epochs=2,
+            epochs=5,
             steps_per_epoch=20,
             batch=8,
             n_range=(15, 20),
