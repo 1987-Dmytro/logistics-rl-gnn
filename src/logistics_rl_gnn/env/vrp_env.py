@@ -14,6 +14,7 @@ import numpy as np
 from gymnasium import spaces
 
 from logistics_rl_gnn.config import instance as cfg
+from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution
 from logistics_rl_gnn.env.travel import FreeFlowTravel
 
 _NF = 8  # признаков на узел: x, y, demand, e, l, service, visited, feasible
@@ -53,6 +54,7 @@ class VRPEnv(gym.Env):
         self.p_unserved = float(penalty_unserved)
         self.p_invalid = float(penalty_invalid)
         self.dense = bool(dense_reward)
+        self._cost_cfg = CostConfig(self.c_f, self.c_d, self.c_t, self.p_late, self.p_unserved)
 
         probe = self._instance_fn(0)
         self.k = len(probe.node_ids)  # стопов; фиксирован для weekday (seed не меняет исключения)
@@ -71,6 +73,7 @@ class VRPEnv(gym.Env):
     # ---------- инстанс ----------
 
     def _load(self, inst) -> None:
+        self._inst = inst  # для единого оценщика на терминале
         self.time_m = np.asarray(inst.time_matrix, dtype=float) / 60.0  # сек→мин
         self.dist_km = np.asarray(inst.dist_matrix, dtype=float) / 1000.0  # м→км
         self.win = np.asarray(inst.windows, dtype=float) / 60.0  # сек→мин
@@ -211,14 +214,15 @@ class VRPEnv(gym.Env):
         return self._obs(), float(reward), terminated, truncated, self._info()
 
     def _terminal_reward(self) -> float:
-        fixed = (
-            self.c_f * self.vehicles_used
-            + self.p_unserved * self._n_unserved()
-            + self.p_late * self.total_late_min
-        )
-        if self.dense:  # дистанция/время уже роздано по шагам
+        if self.dense:  # дистанция/время уже роздано по шагам → терминал = только fixed
+            fixed = (
+                self.c_f * self.vehicles_used
+                + self.p_unserved * self._n_unserved()
+                + self.p_late * self.total_late_min
+            )
             return -fixed
-        return -(fixed + self.c_d * self.total_km + self.c_t * self.total_time_min / 60.0)
+        # sparse: единый оценщик по накопленным маршрутам (та же формула, что у бейзлайнов)
+        return evaluate_solution(self.routes, self._inst, self._cost_cfg)["reward"]
 
     # ---------- helper ----------
 
