@@ -18,3 +18,5 @@ htmlcov/
 *.ckpt
 wandb/
 outputs/
+# сводки бейзлайнов/прогонов (сжатая таблица — в decision-записи)
+/results/
