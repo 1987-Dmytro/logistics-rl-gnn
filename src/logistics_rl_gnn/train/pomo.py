@@ -1,0 +1,180 @@
+"""POMO на статике (Phase 6b Шаг 1) — замена Kool rollout-baseline на multi-start + shared baseline.
+
+На инстанс: encode ОДИН раз → N траекторий из N РАЗНЫХ первых узлов (допустимых на шаге 0),
+sample-режим. shared baseline b = mean_N(cost_i); advantage_i = cost_i − b (центрирован, БЕЗ
+std-норм: POMO baseline не вырожден, all-depot-патологии Phase 6 нет). loss = mean(adv·Σlogπ),
+знак +Σlogπ → спуск ↓cost (как фикс Phase 6; флип → cost растёт, ловится smoke). Ни rollout-
+baseline, ни t-test, ни frozen-copy (shared baseline их заменяет; p=nan уходит). grad-clip@1
+нормирует шаг. Инференс: multi-start greedy (лучший из N стартов). 8x-augmentation НЕ применяем
+(евклидова, у нас реальная travel-матрица) — см. decision 0006. Runtime-страж: |g|≈0 → обрыв.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import torch
+
+from logistics_rl_gnn.baselines.greedy import greedy_routes
+from logistics_rl_gnn.env.scoring import evaluate_solution
+from logistics_rl_gnn.env.vrp_env import VRPEnv
+from logistics_rl_gnn.train.instance_sampler import InstanceSampler
+
+_FREEZE_PATIENCE = 3  # эпох подряд с grad_norm≈0 → обрыв (страж коллапса, как Phase 6)
+
+
+def make_env(instance) -> VRPEnv:
+    """VRPEnv на фиксированном инстансе (instance_fn игнорит seed → reset даёт тот же инстанс)."""
+    return VRPEnv(instance_fn=lambda s: instance)
+
+
+def _heuristic_greedy_cost(env) -> float:
+    """Стоимость эвристики nearest-feasible (Phase 4) — фикс. референс gap (дёшево, без депов)."""
+    routes = greedy_routes(env=env)
+    return -evaluate_solution(routes, env._inst, env._cost_cfg)["reward"]
+
+
+def feasible_starts(env, obs, max_starts: int) -> list[int]:
+    """Детерминированный набор допустимых-НА-ШАГЕ-0 первых узлов (≤ max_starts).
+
+    Берём только mask==1 (иначе форс инфеасибл → log_prob=−inf → NaN). Прореживаем равномерно.
+    """
+    feas = [j for j in range(1, env.k) if obs["action_mask"][j] == 1]
+    if len(feas) <= max_starts:
+        return feas
+    pick = np.linspace(0, len(feas) - 1, max_starts).round().astype(int)
+    return [feas[i] for i in sorted(set(pick.tolist()))]
+
+
+def _decode(policy, env, enc, start: int, mode: str, *, reset_seed: int = 0):
+    """Траектория из ФОРСИРОВАННОГО первого узла start, дальше mode∈{sample,greedy}.
+
+    enc — общий (encode ОДИН раз на инстанс, переживает reset: статический граф). start взят из
+    feasible_starts → допустим → log_prob конечен. -> (cost, sum_logp, mean_ent, routes).
+    """
+    obs, _ = env.reset(seed=reset_seed)
+    logps, ents = [], []
+    forced = start
+    done = False
+    while not done:
+        dist = policy.action_dist(env, obs, enc)
+        if forced is not None:
+            a = torch.as_tensor(forced, device=policy.device)
+            forced = None
+        elif mode == "greedy":
+            a = dist.probs.argmax()
+        else:
+            a = dist.sample()
+        logps.append(dist.log_prob(a))
+        p = dist.probs  # ручная энтропия: маскед p=0 → 0·log≈0 (без NaN от −inf логитов)
+        ents.append(-(p * (p + 1e-12).log()).sum())
+        obs, _, term, trunc, info = env.step(int(a.item()))
+        done = term or trunc
+    cost = -evaluate_solution(info["routes"], env._inst, env._cost_cfg)["reward"]
+    return cost, torch.stack(logps).sum(), torch.stack(ents).mean(), info["routes"]
+
+
+def multistart_greedy(policy, env, max_starts: int, *, reset_seed: int = 0):
+    """Инференс POMO: greedy-decode из N допустимых стартов → (лучшая cost, routes). Быстро."""
+    obs, _ = env.reset(seed=reset_seed)
+    enc = policy.encode(env)  # ОДИН encode на инстанс
+    starts = feasible_starts(env, obs, max_starts)
+    best_c, best_r = float("inf"), None
+    with torch.no_grad():
+        for st in starts:
+            c, _, _, r = _decode(policy, env, enc, st, "greedy", reset_seed=reset_seed)
+            if c < best_c:
+                best_c, best_r = c, r
+    return best_c, best_r
+
+
+class POMOTrainer:
+    def __init__(self, policy, cfg, *, val_ort: float | None = None):
+        self.policy, self.cfg = policy, cfg
+        self.opt = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
+        self.sampler = InstanceSampler(n_range=cfg.n_range)
+        self.val_envs = [make_env(self.sampler.sample(s)) for s in cfg.val_seeds()]
+        self.val_heur = float(np.mean([_heuristic_greedy_cost(e) for e in self.val_envs]))
+        self.val_ort = val_ort  # OR-Tools-референс (инъекция из скрипта; None в тестах)
+
+    def train_batch(self, seeds) -> dict:
+        """Один шаг: на каждый инстанс — N форс-стартов, shared baseline, градиент-аккумуляция."""
+        self.opt.zero_grad()
+        b = len(seeds)
+        ents, cost_vecs = [], []
+        for s in seeds:
+            env = make_env(self.sampler.sample(int(s)))
+            obs, _ = env.reset(seed=0)
+            starts = feasible_starts(env, obs, self.cfg.max_starts)
+            if len(starts) < 2:
+                continue  # shared baseline требует ≥2 старта
+            enc = self.policy.encode(env)  # encode ОДИН раз (переживает reset в _decode)
+            costs, logps, tents = [], [], []
+            for st in starts:
+                c, slp, ent, _ = _decode(self.policy, env, enc, st, "sample")
+                costs.append(c)
+                logps.append(slp)
+                tents.append(ent)
+            cost_t = torch.tensor(costs, dtype=torch.float32)
+            adv = (cost_t - cost_t.mean()).detach()  # shared baseline (центрирован)
+            loss = (adv * torch.stack(logps)).mean()  # +Σlogπ → ↓cost
+            if self.cfg.entropy_beta:
+                loss = loss - self.cfg.entropy_beta * torch.stack(tents).mean()
+            (loss / b).backward()  # аккумулируем (граф инстанса освобождается сразу → память O(1))
+            ents.append(float(torch.stack(tents).mean().detach()))
+            cost_vecs.append(costs)
+        if not cost_vecs:
+            raise RuntimeError("в батче нет инстансов с ≥2 допустимыми стартами")
+        gnorm = torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.cfg.grad_clip)
+        self.opt.step()
+        flat = [c for v in cost_vecs for c in v]
+        return {
+            "cost": float(np.mean(flat)),
+            "entropy": float(np.mean(ents)),
+            "grad_norm": float(gnorm),
+            "start_std": float(np.mean([np.std(v) for v in cost_vecs])),  # разброс стартов
+            "cost_vecs": cost_vecs,  # для теста non-degeneracy
+        }
+
+    def _validate(self) -> dict:
+        costs = [multistart_greedy(self.policy, e, self.cfg.max_starts)[0] for e in self.val_envs]
+        m = float(np.mean(costs))
+        rec = {"val_cost": m, "gap_greedy": m / self.val_heur - 1.0}
+        if self.val_ort is not None:
+            rec["gap_ort"] = m / self.val_ort - 1.0
+        return rec
+
+    def fit(self, log_fn=None) -> list[dict]:
+        rng = np.random.default_rng(self.cfg.seed)
+        torch.manual_seed(self.cfg.seed)
+        best, history, frozen = float("inf"), [], 0
+        for epoch in range(self.cfg.epochs):
+            ep = [
+                self.train_batch(rng.integers(*self.cfg.train_range, size=self.cfg.batch))
+                for _ in range(self.cfg.steps_per_epoch)
+            ]
+            rec = {
+                "epoch": epoch,
+                "train_cost": float(np.mean([e["cost"] for e in ep])),
+                "entropy": float(np.mean([e["entropy"] for e in ep])),
+                "grad_norm": float(np.mean([e["grad_norm"] for e in ep])),
+                "start_std": float(np.mean([e["start_std"] for e in ep])),  # baseline жив (>0)
+                **self._validate(),
+            }
+            history.append(rec)
+            if rec["val_cost"] < best:
+                best = rec["val_cost"]
+                if self.cfg.ckpt:
+                    Path(self.cfg.ckpt).parent.mkdir(parents=True, exist_ok=True)
+                    torch.save(self.policy.state_dict(), self.cfg.ckpt)
+            if log_fn:
+                log_fn(rec)
+            # runtime-страж коллапса: |g|≈0 = насыщение (Phase 6). Обрыв на epoch ~3, НЕ 100.
+            frozen = frozen + 1 if rec["grad_norm"] < 1e-6 else 0
+            if frozen >= _FREEZE_PATIENCE:
+                raise RuntimeError(
+                    f"обучение заморожено: grad_norm≈0 {frozen} эпох подряд (насыщение/коллапс) "
+                    f"— прогон прерван на epoch {epoch} (не {self.cfg.epochs})"
+                )
+        return history
