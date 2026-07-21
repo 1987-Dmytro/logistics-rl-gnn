@@ -69,18 +69,27 @@ class VRPPolicy(nn.Module):
         context = torch.cat([graph_emb, node_embs[env.pos], dyn])
         return self.decoder.dist(context, precomp, mask)
 
-    def rollout(self, env, mode: str = "sample", seed=None):
-        """Автогрегрессивный эпизод. -> (routes, sum_logπ [grad], metrics via evaluate_solution)."""
+    def rollout(self, env, mode: str = "sample", seed=None, return_entropy: bool = False):
+        """Автогрегрессивный эпизод. -> (routes, sum_logπ [grad], metrics[, mean_entropy]).
+
+        return_entropy=True добавляет 4-м элементом среднюю по шагам энтропию π (страж коллапса).
+        """
         obs, info = env.reset(seed=seed)
         enc = self.encode(env)
-        logps = []
+        logps, ents = [], []
         done = False
         while not done:
             dist = self.action_dist(env, obs, enc)
             a = dist.probs.argmax() if mode == "greedy" else dist.sample()
             logps.append(dist.log_prob(a))
+            if return_entropy:  # ручная энтропия (маскед p=0 → 0·log ≈ 0, без NaN от −inf логитов)
+                p = dist.probs
+                ents.append(-(p * (p + 1e-12).log()).sum())
             obs, _, term, trunc, info = env.step(int(a.item()))
             done = term or trunc
         sum_logp = torch.stack(logps).sum() if logps else torch.zeros((), device=self.device)
         metrics = evaluate_solution(info["routes"], env._inst, env._cost_cfg)  # cfg среды
+        if return_entropy:
+            mean_ent = torch.stack(ents).mean().item() if ents else 0.0
+            return info["routes"], sum_logp, metrics, mean_ent
         return info["routes"], sum_logp, metrics
