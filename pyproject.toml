@@ -38,6 +38,12 @@ env = [
 baselines = [
     "ortools>=9.10",
 ]
+# Phase 5: политика GNN+attention (CPU). torch ставить с CPU-index:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+model = [
+    "torch>=2.2",
+    "torch-geometric>=2.5",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
