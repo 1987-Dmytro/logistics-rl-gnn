@@ -20,13 +20,21 @@ from logistics_rl_gnn.models.policy import VRPPolicy
 from logistics_rl_gnn.train.pomo import POMOTrainer, multistart_greedy
 
 
-def _log(rec: dict) -> None:
-    gap_ort = f" | gap_OR {rec['gap_ort']:+.1%}" if "gap_ort" in rec else ""
-    print(
-        f"epoch {rec['epoch']:3d} | train {rec['train_cost']:7.1f} | "
-        f"val {rec['val_cost']:7.1f} (gap_greedy {rec['gap_greedy']:+.1%}{gap_ort}) | "
-        f"H {rec['entropy']:.3f} | |g| {rec['grad_norm']:.2f} | start_std {rec['start_std']:.1f}"
-    )
+def _make_log(cfg: POMOConfig):
+    """Лог-строка эпохи. train/val — оба gap-to-greedy (apples-to-apples); mem растёт = memorize;
+    es = эпох без улучшения val / patience (видно приближение early-stop)."""
+
+    def _log(rec: dict) -> None:
+        gap_ort = f" OR {rec['gap_ort']:+.1%}" if "gap_ort" in rec else ""
+        print(
+            f"ep {rec['epoch']:3d} | train {rec['train_cost']:7.1f} (g{rec['train_gap']:+.1%}) | "
+            f"val {rec['val_cost']:7.1f} (g{rec['gap_greedy']:+.1%}{gap_ort}) | "
+            f"mem {rec['mem_gap']:+.1%} | H {rec['entropy']:.3f} | |g| {rec['grad_norm']:.2f} | "
+            f"std {rec['start_std']:.1f} | es {rec['since_improve']}/{cfg.patience} | "
+            f"fr {rec['inst_hash'][:6]}"  # freshness: меняется каждую эпоху (RNG свеж)
+        )
+
+    return _log
 
 
 def _val_ortools_ref(cfg: POMOConfig) -> float:
@@ -35,7 +43,7 @@ def _val_ortools_ref(cfg: POMOConfig) -> float:
     from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution
     from logistics_rl_gnn.train.instance_sampler import InstanceSampler
 
-    sampler = InstanceSampler(n_range=cfg.n_range)
+    sampler = InstanceSampler(n_range=cfg.val_n_range or cfg.n_range)  # совпасть с eval_sampler
     costs = []
     for s in cfg.val_seeds():
         inst = sampler.sample(s)
@@ -69,18 +77,27 @@ def main() -> None:
 
     ort_s = f" val_OR={val_ort:.1f}" if val_ort else ""
     print(
-        f"{'SMOKE' if args.smoke else 'FULL'} POMO | epochs={cfg.epochs} batch={cfg.batch} "
-        f"starts={cfg.max_starts} steps/ep={cfg.steps_per_epoch} n={cfg.n_range} "
-        f"val_heur={trainer.val_heur:.1f}{ort_s}"
+        f"{'SMOKE' if args.smoke else 'FULL'} POMO | epochs≤{cfg.epochs} patience={cfg.patience} "
+        f"batch={cfg.batch} starts={cfg.max_starts} steps/ep={cfg.steps_per_epoch} n={cfg.n_range} "
+        f"β={cfg.entropy_beta} val_heur={trainer.val_heur:.1f}{ort_s}"
     )
-    trainer.fit(log_fn=_log)
+    hist = trainer.fit(log_fn=_make_log(cfg))
+    sel = min(hist, key=lambda h: h["val_cost"])  # эпоха отбора (best-by-val)
+    if len(hist) < cfg.epochs:
+        print(f"[early-stop на эпохе {hist[-1]['epoch']} — {cfg.patience} эпох без улучшения val]")
 
-    # финал: «Стало» на full-62/seeds 0-9 (multi-start greedy) vs «Было» (baselines.json)
+    # финал: лучшая по val → TEST (held-out) + «Стало» на full-62 vs «Было» (baselines.json).
     best = policy
     if cfg.ckpt and Path(cfg.ckpt).exists():
         best = VRPPolicy()
         best.load_state_dict(torch.load(cfg.ckpt, weights_only=True))
+    test = trainer.test_eval(best)
     stalo, _ = eval_full62(best, cfg.eval_seeds, cfg.max_starts)
+
+    print("\n=== Обобщение (gap-to-greedy; val≈test≈deployment → обобщает, расход → memorize) ===")
+    print(f"  train (probe, эпоха отбора {sel['epoch']}): {sel['train_gap']:+.1%}")
+    print(f"  val   (отбор):                    {sel['gap_greedy']:+.1%}")
+    print(f"  TEST  (held-out):                 {test['test_gap_greedy']:+.1%}")
     print("\n=== Стало vs Было (full-62, seeds 0–9, multi-start greedy) ===")
     bl = Path("results/baselines.json")
     if bl.exists():
@@ -88,7 +105,7 @@ def main() -> None:
         g = -ref["greedy"]["agg"]["reward"]["mean"]
         o = -ref["ortools"]["agg"]["reward"]["mean"]
         print(f"  POMO «Стало»: {stalo:7.1f} €")
-        print(f"  greedy      : {g:7.1f} €  (POMO gap {stalo / g - 1:+.1%})")
+        print(f"  greedy      : {g:7.1f} €  (POMO gap {stalo / g - 1:+.1%}  ← deployment)")
         print(f"  OR-Tools    : {o:7.1f} €  (POMO gap {stalo / o - 1:+.1%})")
     else:
         print(f"  POMO «Стало»: {stalo:7.1f} €  (нет baselines.json — запусти run_baselines.py)")
