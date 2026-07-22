@@ -73,20 +73,26 @@ OMP_NUM_THREADS=12 python -u $TRAIN 2>&1 | tee results/pomo_$(date +%Y%m%d).log
 ### 6. Мониторинг
 
 ```bash
-tail -f results/pomo_*.log     # строки: epoch N | train | val (gap_greedy ±% [| gap_OR ±%]) | H | |g| | start_std
+tail -f results/pomo_*.log  # ep N|train(g±%)|val(g±%[OR±%])|mem±%|H||g||std|es N/patience|fr HASH
 ```
 
-Здоровые признаки: `cost↓` · `|g|>0` · энтропия не 0 и не максимум · `start_std>0` (shared baseline не вырожден).
+Здоровые признаки: `train g↓` · `|g|>0` · энтропия не 0 и не максимум · `std>0` (shared baseline не
+вырожден) · `fr` (хеш инстансов) меняется каждую эпоху (RNG свеж, не повтор драйвов) · `mem` НЕ растёт
+монотонно (растёт = memorization: train↓ при застывшем val). **Гейт
+первых ~15 эпох:** если `val` плоский (в пределах шума) с ~эпохи 3 и `es` только копится, не улучшаясь
+→ сигнал отбора слаб (val насытился у эвристики, как в прошлом прогоне) → поднять `val_n_range=(62,62)`
+(лычаг в config/pomo.py — val/test на deployment-размере) и перезапустить. `es N/patience` → early-stop.
 
 ### 7. Забрать результат
 
 ```bash
-# на маке
-rsync -av "$SERVER:$REPO/results/policy_pomo_best.pt"  results/
-rsync -av "$SERVER:$REPO/results/pomo_*.log"           results/
+# на маке (refit пишет policy_pomo_refit.pt — glob заберёт и его, и старый best 770.4€)
+rsync -av "$SERVER:$REPO/results/policy_pomo_*.pt"  results/
+rsync -av "$SERVER:$REPO/results/pomo_*.log"        results/
 ```
 
-Веса вне git (запрет №1) → в git коммитим только метрики/сводку + decision с числами.
+Веса вне git (запрет №1) → в git коммитим только метрики/сводку + decision с числами. Refit пишет в
+`policy_pomo_refit.pt` — старый `policy_pomo_best.pt` (770.4€) НЕ затирается (нужен для сравнения).
 
 ## Воспроизводимость (обязательно)
 
