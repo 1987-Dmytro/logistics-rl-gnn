@@ -11,6 +11,7 @@ baseline, ни t-test, ни frozen-copy (shared baseline их заменяет; 
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,15 @@ from logistics_rl_gnn.env.vrp_env import VRPEnv
 from logistics_rl_gnn.train.instance_sampler import InstanceSampler
 
 _FREEZE_PATIENCE = 3  # эпох подряд с grad_norm≈0 → обрыв (страж коллапса, как Phase 6)
+_PROBE_N = 16  # фикс. train-инстансов в probe (train-side gauge gap-to-greedy; тренд, не точность)
+
+
+def _ids_hash(id_lists) -> str:
+    """sha1[:12] от node_id-наборов инстансов — детектор свежести (RNG продвигается → хеш иной)."""
+    h = hashlib.sha1()
+    for ids in id_lists:
+        h.update(repr(tuple(ids)).encode())
+    return h.hexdigest()[:12]
 
 
 def make_env(instance) -> VRPEnv:
@@ -98,18 +108,29 @@ class POMOTrainer:
     def __init__(self, policy, cfg, *, val_ort: float | None = None):
         self.policy, self.cfg = policy, cfg
         self.opt = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
-        self.sampler = InstanceSampler(n_range=cfg.n_range)
-        self.val_envs = [make_env(self.sampler.sample(s)) for s in cfg.val_seeds()]
+        self.sampler = InstanceSampler(n_range=cfg.n_range)  # train-инстансы
+        # eval_sampler: val/test на n_range (лычаг val_n_range → deployment-размер, если val слаб)
+        self.eval_sampler = (
+            self.sampler if cfg.val_n_range is None else InstanceSampler(n_range=cfg.val_n_range)
+        )
+        self.val_envs = [make_env(self.eval_sampler.sample(s)) for s in cfg.val_seeds()]
         self.val_heur = float(np.mean([_heuristic_greedy_cost(e) for e in self.val_envs]))
+        # train-probe: фикс. train-инстансы, gauge train-side gap (memorization = train↓ vs val→)
+        probe_seeds = range(cfg.train_range[0], cfg.train_range[0] + _PROBE_N)
+        self.probe_envs = [make_env(self.sampler.sample(s)) for s in probe_seeds]
+        self.probe_heur = float(np.mean([_heuristic_greedy_cost(e) for e in self.probe_envs]))
         self.val_ort = val_ort  # OR-Tools-референс (инъекция из скрипта; None в тестах)
+        self._test_built = False
 
     def train_batch(self, seeds) -> dict:
         """Один шаг: на каждый инстанс — N форс-стартов, shared baseline, градиент-аккумуляция."""
         self.opt.zero_grad()
         b = len(seeds)
-        ents, cost_vecs = [], []
+        ents, cost_vecs, sampled = [], [], []
         for s in seeds:
-            env = make_env(self.sampler.sample(int(s)))
+            inst = self.sampler.sample(int(s))
+            sampled.append(inst.node_ids)  # для freshness-хеша эпохи
+            env = make_env(inst)
             obs, _ = env.reset(seed=0)
             starts = feasible_starts(env, obs, self.cfg.max_starts)
             if len(starts) < 2:
@@ -140,6 +161,7 @@ class POMOTrainer:
             "grad_norm": float(gnorm),
             "start_std": float(np.mean([np.std(v) for v in cost_vecs])),  # разброс стартов
             "cost_vecs": cost_vecs,  # для теста non-degeneracy
+            "inst_hash": _ids_hash(sampled),  # свежесть инстансов шага (RNG продвигается)
         }
 
     def _validate(self) -> dict:
@@ -150,10 +172,30 @@ class POMOTrainer:
             rec["gap_ort"] = m / self.val_ort - 1.0
         return rec
 
+    def _train_probe(self) -> float:
+        """Gap-to-greedy на ФИКС. train-инстансах (apples-to-apples к val: оба greedy multistart).
+
+        train_gap↓ при застывшем val_gap = memorization. Отдельно от freshness (probe — константный
+        gauge, freshness — над свежими train-драйвами).
+        """
+        costs = [multistart_greedy(self.policy, e, self.cfg.max_starts)[0] for e in self.probe_envs]
+        return float(np.mean(costs)) / self.probe_heur - 1.0
+
+    def test_eval(self, policy=None) -> dict:
+        """Held-out TEST (ленивое построение) — gap-to-greedy лучшей политики. НЕ для отбора."""
+        pol = self.policy if policy is None else policy
+        if not self._test_built:
+            self.test_envs = [make_env(self.eval_sampler.sample(s)) for s in self.cfg.test_seeds()]
+            self.test_heur = float(np.mean([_heuristic_greedy_cost(e) for e in self.test_envs]))
+            self._test_built = True
+        costs = [multistart_greedy(pol, e, self.cfg.max_starts)[0] for e in self.test_envs]
+        m = float(np.mean(costs))
+        return {"test_cost": m, "test_gap_greedy": m / self.test_heur - 1.0}
+
     def fit(self, log_fn=None) -> list[dict]:
         rng = np.random.default_rng(self.cfg.seed)
         torch.manual_seed(self.cfg.seed)
-        best, history, frozen = float("inf"), [], 0
+        best, history, frozen, since = float("inf"), [], 0, 0
         for epoch in range(self.cfg.epochs):
             ep = [
                 self.train_batch(rng.integers(*self.cfg.train_range, size=self.cfg.batch))
@@ -165,21 +207,30 @@ class POMOTrainer:
                 "entropy": float(np.mean([e["entropy"] for e in ep])),
                 "grad_norm": float(np.mean([e["grad_norm"] for e in ep])),
                 "start_std": float(np.mean([e["start_std"] for e in ep])),  # baseline жив (>0)
-                **self._validate(),
+                # freshness эпохи: хеш шаговых хешей; 3 эпохи подряд должны различаться
+                "inst_hash": _ids_hash([e["inst_hash"] for e in ep]),
+                "train_gap": self._train_probe(),  # train-side gap-to-greedy (probe)
+                **self._validate(),  # val_cost, gap_greedy[, gap_ort]
             }
+            rec["mem_gap"] = rec["gap_greedy"] - rec["train_gap"]  # растёт (val↑/train↓) → memorize
             history.append(rec)
-            if rec["val_cost"] < best:
-                best = rec["val_cost"]
+            if rec["val_cost"] < best - 1e-9:  # best-by-val → чекпойнт (отбор ТОЛЬКО по val)
+                best, since = rec["val_cost"], 0
                 if self.cfg.ckpt:
                     Path(self.cfg.ckpt).parent.mkdir(parents=True, exist_ok=True)
                     torch.save(self.policy.state_dict(), self.cfg.ckpt)
+            else:
+                since += 1
+            rec["since_improve"] = since
             if log_fn:
                 log_fn(rec)
-            # runtime-страж коллапса: |g|≈0 = насыщение (Phase 6). Обрыв на epoch ~3, НЕ 100.
+            # runtime-страж коллапса: |g|≈0 = насыщение (Phase 6). Обрыв на epoch ~3, НЕ epochs_max.
             frozen = frozen + 1 if rec["grad_norm"] < 1e-6 else 0
             if frozen >= _FREEZE_PATIENCE:
                 raise RuntimeError(
                     f"обучение заморожено: grad_norm≈0 {frozen} эпох подряд (насыщение/коллапс) "
                     f"— прогон прерван на epoch {epoch} (не {self.cfg.epochs})"
                 )
+            if since >= self.cfg.patience:  # early-stop: patience эпох без улучшения val
+                break
         return history
