@@ -74,7 +74,7 @@ def _load_policy(ckpt: Path) -> VRPPolicy:
     return pol
 
 
-def run(seeds, *, deadline_s: int, n_events: int, ckpt: Path) -> dict:
+def run(seeds, *, deadline_s: int, n_events: int, ckpt: Path, rl_planner=None) -> dict:
     pol = _load_policy(ckpt)
     dow = im.DELIVERY_WEEKDAY
     base_k = im.FLEET_SIZE
@@ -99,7 +99,8 @@ def run(seeds, *, deadline_s: int, n_events: int, ckpt: Path) -> dict:
                 res, dow=dow, offset_min=state.now_min, incidents=state.incidents
             )
             out = compare_replan(
-                res, travel, pol, fleet_size=state.fleet(base_k), deadline_s=deadline_s
+                res, travel, pol, fleet_size=state.fleet(base_k), deadline_s=deadline_s,
+                rl_planner=rl_planner,
             )
             for m in _METHODS:
                 records.append(

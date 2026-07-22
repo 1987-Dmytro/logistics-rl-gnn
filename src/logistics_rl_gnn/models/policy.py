@@ -80,19 +80,61 @@ class VRPPolicy(nn.Module):
         node_embs, graph_emb = self.encoder(node_feat, ei, ea)
         return node_embs, graph_emb, self.decoder.precompute(node_embs)
 
-    def action_dist(self, env, obs, enc) -> torch.distributions.Categorical:
-        """Распределение π(a|s) в текущем состоянии env. enc = (node_embs, graph_emb, precomp)."""
-        node_embs, graph_emb, precomp = enc
+    def _context(self, env, enc) -> torch.Tensor:
+        """Вектор контекста π(·|s): [graph_emb, emb(pos), dyn(2), tctx(4)].
+        Общий для одиночного (train) и батчевого (sample_k) путей — одна раскладка, без дублей."""
+        node_embs, graph_emb, _ = enc
         horizon = env._inst.horizon_s / 60.0
-        mask = torch.as_tensor(obs["action_mask"], dtype=torch.float32, device=self.device)
         dyn = torch.tensor(
             [env.rem_cap / env.Q, env.cur_time / horizon], dtype=torch.float32, device=self.device
         )
         tctx = torch.as_tensor(  # time-context (congestion-фаза): под free-flow — постоянный вход
             time_context(env.abs_minute, env.dow), dtype=torch.float32, device=self.device
         )
-        context = torch.cat([graph_emb, node_embs[env.pos], dyn, tctx])
-        return self.decoder.dist(context, precomp, mask)
+        return torch.cat([graph_emb, node_embs[env.pos], dyn, tctx])
+
+    def action_dist(self, env, obs, enc) -> torch.distributions.Categorical:
+        """Распределение π(a|s) в текущем состоянии env. enc = (node_embs, graph_emb, precomp)."""
+        mask = torch.as_tensor(obs["action_mask"], dtype=torch.float32, device=self.device)
+        return self.decoder.dist(self._context(env, enc), enc[2], mask)
+
+    def sample_k(self, envs, enc, *, temperature: float = 1.0, seed: int = 0) -> list:
+        """K стохастических роллаутов из ОБЩЕГО enc, decode БАТЧЕВО по K (один forward на шаг).
+
+        envs — K свежих копий ОДНОГО (фикс.) инстанса → общий статический граф → общий enc;
+        сбрасываются здесь (дивергенция только от сэмплинга). Форс-старты НЕ навязываем — чистый
+        temperature-сэмплинг с шага 0 (POMO multistart-greedy = отдельный кандидат портфеля).
+        Мутируем ТОЛЬКО env-копии; seed → детерминизм (свой генератор, глобальный RNG не трогаем).
+        -> list[routes] длины K.
+        """
+        assert temperature > 0, "temperature > 0 (greedy — отдельная стратегия)"
+        dev = self.device
+        gen = torch.Generator(device=dev).manual_seed(int(seed))
+        obs = [e.reset(seed=0)[0] for e in envs]  # фикс. инстанс (make_dynamic_env игнорит seed)
+        routes: list = [None] * len(envs)
+        active = list(range(len(envs)))
+        precomp = enc[2]
+        with torch.no_grad():
+            while active:
+                ctx = torch.stack([self._context(envs[i], enc) for i in active])  # [A, ctx]
+                mask = torch.stack(
+                    [
+                        torch.as_tensor(obs[i]["action_mask"], dtype=torch.float32, device=dev)
+                        for i in active
+                    ]
+                )  # [A, N+1]
+                logits = self.decoder.logits_batch(ctx, precomp, mask)
+                probs = torch.softmax(logits / temperature, -1)
+                acts = torch.multinomial(probs, 1, generator=gen).squeeze(1)  # [A]
+                still = []
+                for slot, a in zip(active, acts.tolist(), strict=False):
+                    obs[slot], _, term, trunc, info = envs[slot].step(int(a))
+                    if term or trunc:
+                        routes[slot] = info["routes"]
+                    else:
+                        still.append(slot)
+                active = still
+        return routes
 
     def rollout(self, env, mode: str = "sample", seed=None, return_entropy: bool = False):
         """Автогрегрессивный эпизод. -> (routes, sum_logπ [grad], metrics[, mean_entropy]).

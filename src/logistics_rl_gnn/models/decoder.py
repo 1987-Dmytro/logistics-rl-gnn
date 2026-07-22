@@ -49,5 +49,24 @@ class AttentionDecoder(nn.Module):
         logits = torch.matmul(precomp["Kc"], qc) / math.sqrt(self.d)  # [N+1]
         return logits.masked_fill(mask == 0, float("-inf"))
 
+    def logits_batch(self, context, precomp: dict, mask) -> torch.Tensor:
+        """Батч-версия `logits` по B состояниям ОДНОГО инстанса (precomp общий, Phase 6b Шаг 3).
+
+        context [B, ctx_dim], mask [B, N+1] (1=feasible) → logits [B, N+1]. Та же математика,
+        что одиночный `logits`, векторно по B (один forward на все K роллаутов инференс-поиска).
+        Одиночный путь (train) НЕ трогаем — parity-тест сверяет батч со `logits`.
+        """
+        b, n = context.shape[0], precomp["Kc"].shape[0]
+        q = self.Wq(context)  # [B, d]
+        qh = q.view(b, self.h, self.hd)  # [B, H, hd]
+        Kg = precomp["Kg"].view(n, self.h, self.hd).permute(1, 0, 2)  # [H, N+1, hd] (общий)
+        Vg = precomp["Vg"].view(n, self.h, self.hd).permute(1, 0, 2)
+        scores = torch.einsum("bhd,hnd->bhn", qh, Kg) / math.sqrt(self.hd)  # [B, H, N+1]
+        scores = scores.masked_fill(mask.unsqueeze(1) == 0, float("-inf"))
+        glimpse = torch.einsum("bhn,hnd->bhd", torch.softmax(scores, -1), Vg).reshape(b, self.d)
+        qc = self.Wout(glimpse)  # [B, d]
+        logits = torch.einsum("bd,nd->bn", qc, precomp["Kc"]) / math.sqrt(self.d)  # [B, N+1]
+        return logits.masked_fill(mask == 0, float("-inf"))
+
     def dist(self, context, precomp: dict, mask) -> Categorical:
         return Categorical(logits=self.logits(context, precomp, mask))

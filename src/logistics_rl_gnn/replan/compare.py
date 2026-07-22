@@ -60,12 +60,20 @@ def compare_replan(
     deadline_s: int = 2,
     rl_reps: int = 3,
     warmup: int = 1,
+    rl_planner=None,
 ) -> dict:
-    """Re-plan residual каждым методом → {method: {latency_ms, reward, on_time_pct, ...}}."""
+    """Re-plan residual каждым методом → {method: {latency_ms, reward, on_time_pct, ...}}.
+
+    rl_planner=None → метод «rl» = greedy-decode (одиночный forward, Phase 7). rl_planner задан
+    (Шаг 3) → «rl» = PortfolioPlanner.plan (sample-K ∪ RL-greedy ∪ greedy); латентность end-to-end
+    портфеля через тот же `_bench`. Гарантия rl ≤ greedy держится: greedy-кандидат в портфеле
+    строится идентично методу `greedy` тут (тот же instance+travel+fleet_size+scorer)."""
     cfg = CostConfig()
     n = len(residual.demand)
 
     def rl():
+        if rl_planner is not None:  # портфель (reps=1: медиану даёт внешний _bench)
+            return rl_planner.plan(residual, travel, fleet_size=fleet_size)["routes"]
         env = make_dynamic_env(residual, travel=travel, fleet_size=fleet_size)
         with torch.no_grad():  # инференс: без autograd-графа (честная латентность)
             return policy.rollout(env, mode="greedy")[0]
