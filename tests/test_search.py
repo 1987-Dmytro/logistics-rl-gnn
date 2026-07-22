@@ -128,6 +128,19 @@ def test_take_best_skips_none_candidates():
     assert idx == 1 and routes is good and cost > 0
 
 
+def test_portfolio_with_polish_preserves_guarantee():
+    """Шаг 3.5: polish топ-M в портфеле НЕ ломает гарантию ≤ greedy (исходный greedy в пуле)."""
+    from logistics_rl_gnn.replan.portfolio import PortfolioPlanner
+
+    torch.manual_seed(0)
+    planner = PortfolioPlanner(
+        VRPPolicy(), k_samples=8, rl_starts=4, polish_budget_ms=80.0, polish_top_m=3
+    )
+    for inst, travel, fleet in _planner_cases():
+        r = planner.plan(inst, travel, fleet_size=fleet)
+        assert r["cost"] <= r["greedy_cost"] + 1e-6, "polish сломал гарантию ≤ greedy"
+
+
 def test_portfolio_logs_latency():
     from logistics_rl_gnn.replan.portfolio import PortfolioPlanner
 

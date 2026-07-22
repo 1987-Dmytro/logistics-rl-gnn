@@ -29,6 +29,48 @@ class CostConfig:
     p_unserved: float = _im.PENALTY_UNSERVED
 
 
+def check_feasible(
+    routes, instance, travel=None, *, t_max_min: float, vehicle_cap: float, fleet_size: int
+) -> bool:
+    """Жёсткая феасибилити маршрутов (cap/TW/T_max/fleet) — ЗЕРКАЛО time-walk `evaluate_solution`.
+
+    НЕ считает стоимость (это `evaluate_solution`), только констрейнты — «единый источник» цел.
+    Семантика строго как в СРЕДЕ (`VRPEnv._feasible`, единый источник feasibility): TW ЖЁСТКОЕ
+    (arrival ≤ l_j; НЕ через штраф p_late), cap по сумме спроса ≤ Q, T_max по каждой машине
+    (возврат в депо ≤ T_max), число непустых маршрутов ≤ fleet. Ошибаться строго, не слабее среды.
+    Walk (arrival/wait/service) идентичен `evaluate_solution` — agreement-тест сторожит расхождение.
+    """
+    time_m = np.asarray(instance.time_matrix, dtype=float) / 60.0
+    win = np.asarray(instance.windows, dtype=float) / 60.0
+    service = np.asarray(instance.service, dtype=float) / 60.0
+    demand = np.asarray(instance.demand, dtype=float)
+    eps = 1e-6
+    vehicles_used = 0
+    for route in routes:
+        if len(route) < 2 or all(n == 0 for n in route):
+            continue  # пустая машина — как в evaluate_solution
+        vehicles_used += 1
+        load = t = 0.0
+        for a, b in zip(route[:-1], route[1:], strict=False):
+            dt = float(travel.time(a, b, t)) if travel is not None else float(time_m[a, b])
+            arrival = t + dt
+            if b == 0:  # возврат в депо: T_max по машине
+                if arrival > t_max_min + eps:
+                    return False
+                t = arrival
+                continue
+            if arrival > win[b, 1] + eps:  # TW жёсткое (опоздал за позднее окно)
+                return False
+            load += demand[b]
+            if load > vehicle_cap + eps:  # cap
+                return False
+            t = max(arrival, win[b, 0]) + service[b]  # ждём до e_b, затем сервис
+            back = float(travel.time(b, 0, t)) if travel is not None else float(time_m[b, 0])
+            if t + back > t_max_min + eps:  # ПЕР-КЛИЕНТ: успеть вернуться в депо (== env._feasible)
+                return False
+    return vehicles_used <= fleet_size
+
+
 def evaluate_solution(routes, instance, cfg: CostConfig, travel=None) -> dict:
     """Стоимость решения ЕДИНОЙ формулой VRPEnv.
 

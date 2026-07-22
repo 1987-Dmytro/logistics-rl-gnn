@@ -16,6 +16,7 @@ import time
 from logistics_rl_gnn.baselines.greedy import greedy_routes
 from logistics_rl_gnn.env.events import make_dynamic_env
 from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution
+from logistics_rl_gnn.replan.local_search import polish
 from logistics_rl_gnn.train.pomo import multistart_greedy
 
 
@@ -43,12 +44,16 @@ class PortfolioPlanner:
         temperature: float = 1.0,
         rl_starts: int = 8,
         seed: int = 0,
+        polish_budget_ms: float = 0.0,
+        polish_top_m: int = 5,
     ):
         self.policy = policy
         self.k_samples = int(k_samples)
         self.temperature = float(temperature)
         self.rl_starts = int(rl_starts)
         self.seed = int(seed)
+        self.polish_budget_ms = float(polish_budget_ms)  # 0 → polish выключен (Шаг 3.5)
+        self.polish_top_m = int(polish_top_m)
 
     def _candidates(self, instance, travel, fleet_size: int):
         """Все кандидаты (детерминированы seed): (greedy, rl-multistart, [K sample-роллаутов])."""
@@ -67,26 +72,43 @@ class PortfolioPlanner:
         sk = self.policy.sample_k(envs, enc, temperature=self.temperature, seed=self.seed)
         return gr, rl_routes, sk
 
-    def plan(self, instance, travel, *, fleet_size: int, reps: int = 1, warmup: int = 0) -> dict:
-        """Re-plan портфелем. -> {routes, cost, greedy_cost, source, n_candidates, latency_ms}."""
-        cfg = CostConfig()
-        for _ in range(warmup):  # torch lazy-init гасим (честная латентность)
-            self._candidates(instance, travel, fleet_size)
-        ts: list[float] = []
-        gr = rl_routes = sk = None
-        for _ in range(max(1, reps)):  # детерминизм по seed → реплики идентичны; меряем время
-            t0 = time.perf_counter()
-            gr, rl_routes, sk = self._candidates(instance, travel, fleet_size)
-            ts.append((time.perf_counter() - t0) * 1000.0)
+    def _select(self, instance, travel, fleet_size: int, cfg: CostConfig) -> dict:
+        """Кандидаты → (опц.) polish топ-M в общем бюджете → best. Внутри timed-блока plan()."""
+        gr, rl_routes, sk = self._candidates(instance, travel, fleet_size)
         cands = [gr, rl_routes, *sk]  # rl_routes=None при отсутствии feasible POMO-старта
         labels = ["greedy", "rl_greedy", *(["sample"] * len(sk))]
-        best_routes, best_cost, idx = take_best(cands, instance, travel, cfg)
         greedy_cost = -evaluate_solution(gr, instance, cfg, travel=travel)["reward"]
+        if self.polish_budget_ms > 0:  # Шаг 3.5: полируем топ-M кандидатов в ОБЩЕМ бюджете
+            scored = [
+                (i, -evaluate_solution(c, instance, cfg, travel=travel)["reward"])
+                for i, c in enumerate(cands)
+                if c is not None
+            ]
+            top = [i for i, _ in sorted(scored, key=lambda ic: ic[1])[: self.polish_top_m]]
+            per = self.polish_budget_ms / max(1, len(top))
+            for i in top:  # исходные кандидаты остаются в пуле → гарантия ≤ greedy цела
+                pr, _ = polish(cands[i], instance, travel, budget_ms=per, fleet_size=fleet_size)
+                cands.append(pr)
+                labels.append(labels[i] + "+polish")
+        best_routes, best_cost, idx = take_best(cands, instance, travel, cfg)
         return {
             "routes": best_routes,
             "cost": best_cost,
             "greedy_cost": greedy_cost,  # гарантия: best_cost ≤ greedy_cost (тот же scorer)
             "source": labels[idx],
             "n_candidates": sum(c is not None for c in cands),
-            "latency_ms": statistics.median(ts),
         }
+
+    def plan(self, instance, travel, *, fleet_size: int, reps: int = 1, warmup: int = 0) -> dict:
+        """Re-plan портфелем. -> {routes, cost, greedy_cost, source, n_candidates, latency_ms}."""
+        cfg = CostConfig()
+        for _ in range(warmup):  # torch lazy-init гасим (честная латентность)
+            self._select(instance, travel, fleet_size, cfg)
+        ts: list[float] = []
+        out: dict = {}
+        for _ in range(max(1, reps)):  # детерминизм по seed → реплики идентичны; меряем время
+            t0 = time.perf_counter()
+            out = self._select(instance, travel, fleet_size, cfg)
+            ts.append((time.perf_counter() - t0) * 1000.0)
+        out["latency_ms"] = statistics.median(ts)
+        return out
