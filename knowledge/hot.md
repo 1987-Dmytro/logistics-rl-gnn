@@ -2,44 +2,67 @@
 
 # Hot Cache
 
-**Auto-refreshed:** 2026-07-20 19:20:15 (every SessionStart)
+**Auto-refreshed:** 2026-07-22 18:16:49 (every SessionStart)
 **Branch:** `main`
 
 ## 🔀 Recent commits (top 5)
 
 ```
-d7498df feat: Phase 2 — OSMnx-пайплайн Аугсбурга (data)
-e711c37 feat: Phase 1 — скелет репо + verifier-петля
-835b43c chore: initial scaffold + MDP spec (0001)
+63c3fd3 docs(decision): 0007 congestion-training (Path A) — статика −1.7%, динамика −0.4%
+e0d21cc feat(scripts): run_dynamic --ckpt/--out (переоценка таблицы 0004, Шаг 2 Piece 5)
+f0dc54d feat(scripts): congestion Было/Стало eval + --congestion wiring + tests
+3cfac88 feat(train): POMO congestion training (Шаг 2) — warm-start + floor + sampler
+fe67766 perf(models): vectorize build_graph travel matrix (CongestionTravel.matrix)
 ```
 
 ## 📋 Recent decisions
 
-- `0001-mdp-spec.md` — 0001 — Динамический CVRPTW: доставка по аптекам Аугсбурга
+- `0008-phase6b-inference-search.md` — 0008 — Инференс-поиск (Phase 6b · Шаг 3)
+- `0007-phase6b-congestion-training.md` — 0007 — Обучение под congestion (Phase 6b · Шаг 2)
+- `0006-pomo-static.md` — 0006 — POMO на статике (Phase 6b · Шаг 1)
 
 ## 📅 Recent daily logs
 
+- `2026-07-22.md`
+- `2026-07-21.md`
 - `2026-07-20.md`
 
 <!-- AUTO-GEN END (everything below preserved across refreshes) -->
 
 # Hot Cache — curated
 
-**Last update:** 2026-07-20 19:15 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
+**Last update:** 2026-07-22 19:40 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
 
 ## 🔥 What's Hot
-- Phase 2 ЗАКРЫТА (коммит `d7498df`): OSMnx-пайплайн Аугсбурга. Снапшот строится
-  `python scripts/build_snapshot.py` → `data/snapshots/augsburg_<YYYYMMDD>/` (вне git).
-  Реальные числа: 4819 узлов, maxspeed-покрытие 89.7%, 62 аптеки; матрицы 63×63 ПО СТОПАМ.
-- Ключевое в матрицах: индексация ПО СТОПАМ (депо + каждая аптека = строка), НЕ по уникальным
-  узлам; со-узловые аптеки → Δ=0, но отдельные строки. dim = 1 + n_pharmacies.
-- Депы: группа `[data]` (osmnx 2.1/CPU). `.gitignore` анкорит `/data/` и `/cache/` — НЕ вернуть
-  к `data/` (тихо игнорит пакет кода `src/.../data/`).
+- **Phase 6b Шаг 3 ЗАКРЫТ — инференс-поиск (БЕЗ обучения, PortfolioPlanner):** **динамический пол
+  ЗАКРЫТ** — портфель { sample-K ∪ RL-multistart ∪ greedy } ≥ greedy на **25/25 событиях** по
+  построению (байт-идентичный greedy-кандидат), 0004 re-plan **−0.9%** vs greedy (в 0007 было **+1.6%
+  ХУЖЕ**), латентность **430мс <1с** (OR ×5). Статика: portfolio **766.1€** (−7.2% vs greedy, +25.4%
+  vs OR); дискриминатор — sample-K дал **−2.45% сверх** pre-existing multistart (785.3→766.1, обходит
+  best.pt 770.4). **Честно: динамика — реальный ново-выигрыш; статику тянет multistart, sample-K
+  скромен.** Латентность **env-bound** (~линейна по K; нейронка батчится). [[0008-phase6b-inference-search]].
+- **Phase 6b Шаг 2 — congestion-обучение (Path A + warm-start от 770.4€):** статика **−1.7%**
+  (RL-cong vs RL-ff под congestion, вернул greedy-паритет+; free-flow-best под congestion был +0.8% =
+  OOD), динамика (0004 re-plan) **−0.4%** (слабо, но не выброс: 16:7 событий). **RL под динамикой НЕ
+  обгоняет greedy** (event-dependent); латентность **×134** цела; **floor → деплой ≥ warm-start**.
+  Модест-плюс, статика > динамика. `results/policy_pomo_congestion.pt` (вне git). [[0007-phase6b-congestion-training]].
+  **Урок:** диурнал ~невидим энкодеру (max-норма стирает равномерный c) → **инциденты на t0 — весь сигнал**.
+- **Шаг 1·refit — анти-оверфит POMO валидирован:** «Стало» **783.2€** (не побил прошлый 770.4€, +1.7%),
+  НО обобщение чисто (train/val/test/deploy согласованы → memorization нет) → выигрыш RL реален, не оверфит.
+  `policy_pomo_best.pt` (770.4€) = деплой-модель (refit/congestion — отдельные файлы). [[0006-pomo-static]].
+- **Phase 7 (динамика/латентность):** RL реагирует **×134** быстрее OR-Tools (forward-pass без поиска);
+  качество event-dependent, OR сильнее на больших residual. env НЕ переписан. [[0004-dynamics]], `run_dynamic.py`.
+- **КРИТИЧНО — коллапс обучения (Phase 6):** decoder БЕЗ `C·tanh` (насыщение зануляло grad), advantage
+  НОРМИРУЕТСЯ; freeze-guard `|g|≈0` 3 эпохи → обрыв. НЕ возвращать tanh-clip / ненорм. adv.
+- «Было» Phase 4: greedy **−825€**, OR-Tools **−611€** ([[0002-baselines]], `results/baselines.json`).
+  Единый `env/scoring.py:evaluate_solution` — одна reward-формула для среды И бейзлайнов/политики.
 
 ## ⏭️ Next
-- Phase 3 (env): `DynamicVRPEnv` (MDP dec-0001 §3) поверх снапшота — state/action(masking)/reward,
-  transition с travel-time из матриц + congestion-профиль. Пинить `gymnasium`/`numpy`.
-- Phase 4 baseline (OR-Tools + greedy) — до RL, для честного «Было/Стало» (запрет №3).
+- **Phase 6b по сути закрыта** (Шаг 0 obs · Шаг 1 static/refit · Шаг 2 congestion-обучение · Шаг 3
+  инференс-поиск: пол закрыт, static срезан скромно). Осталось решить: закрывать фазу или Path B.
+- **Path B (residual-дообучение)** — только если нужна победа RL над greedy ПО КАЧЕСТВУ (не только ≥)
+  на больших residual: обучение на распределении re-plan (депо+необслуженные+срочные, окна сдвинуты). Резерв.
+- Опц.: закоммитить висящие vault-правки прошлых /save (0006-refit-секция, daily 21/22, index).
 
 ## 🚧 Blockers
 - нет
