@@ -41,6 +41,10 @@ class FreeFlowTravel(TravelModel):
     def time(self, i: int, j: int, at_minute: float = 0.0) -> float:
         return float(self.time_m[i, j])
 
+    def matrix(self, at_minute: float = 0.0) -> np.ndarray:
+        """Вся матрица времени (мин) — free-flow не зависит от времени → t0."""
+        return self.time_m
+
 
 def _km(a: tuple[float, float], b: tuple[float, float]) -> float:
     """Приближённое расстояние lon/lat → км (локальная плоская аппроксимация, Augsburg ~48.4°).
@@ -51,6 +55,19 @@ def _km(a: tuple[float, float], b: tuple[float, float]) -> float:
     dlon = (a[0] - b[0]) * 111.320 * math.cos(lat)
     dlat = (a[1] - b[1]) * 110.574
     return math.hypot(dlon, dlat)
+
+
+def _km_to_center(coords: np.ndarray, center: tuple[float, float]) -> np.ndarray:
+    """Векторно расстояние (км) от каждого узла до center — ТОЧНО как _km (per-node midpoint-lat).
+
+    Совпадать с _km обязательно: узел у границы зоны иначе флипнет in/out (тихий баг). -> [k].
+    """
+    coords = np.asarray(coords, dtype=float)
+    clon, clat = float(center[0]), float(center[1])
+    midlat = np.radians((clat + coords[:, 1]) / 2.0)  # per-node середина, как в _km
+    dlon = (clon - coords[:, 0]) * 111.320 * np.cos(midlat)
+    dlat = (clat - coords[:, 1]) * 110.574
+    return np.hypot(dlon, dlat)
 
 
 @dataclass
@@ -143,6 +160,34 @@ class CongestionTravel(TravelModel):
                 return math.inf  # закрытие ребра → недостижимо (маскируется в env)
             inc += d
         return t0 * c * (1.0 + inc)
+
+    def matrix(self, at_minute: float = 0.0) -> np.ndarray:
+        """Вся матрица t(i,j,at) одним шотом (векторно) — ТОЧНЫЙ паритет с поэлементным time().
+
+        Зоны инцидентов через outer-OR булевых масок узлов; закрытие → inf на ребре (union по
+        всем closure-инцидентам, поверх любых конечных вкладов — как early-return inf у time()).
+        build_graph зовёт это (k² Python-вызовов time() душат POMO-ретрейн при k=62).
+        """
+        abs_min = self.offset_min + at_minute
+        c = 1.0 if self.flat_c else cg.congestion(self.dow, DISPATCH_OPEN_H + abs_min / 60.0)
+        tm = self.time_m * c
+        if not self.incidents:
+            return tm
+        k = tm.shape[0]
+        inc = np.zeros((k, k), dtype=float)
+        closed = np.zeros((k, k), dtype=bool)
+        for ic in self.incidents:
+            if not (ic.t_start_min <= abs_min <= ic.t_start_min + ic.duration_min):
+                continue  # вне окна инцидента — вклад 0 (как contrib())
+            zone = _km_to_center(self.coords, ic.center) <= ic.radius_km  # [k] узлов в зоне
+            edge_zone = zone[:, None] | zone[None, :]  # ребро задето, если i ИЛИ j в зоне
+            if math.isinf(ic.magnitude):
+                closed |= edge_zone
+            else:
+                decay = 1.0 - (abs_min - ic.t_start_min) / ic.duration_min  # 1→0 линейно
+                inc += np.where(edge_zone, ic.magnitude * decay, 0.0)
+        tm = tm * (1.0 + inc)
+        return np.where(closed, np.inf, tm)  # закрытие перекрывает конечные вклады (== time())
 
     def node_congestion(self, coords, at_minute: float = 0.0) -> np.ndarray:
         """max по инцидентам вклада на узел (0 без активных инцидентов) — конечный уровень."""

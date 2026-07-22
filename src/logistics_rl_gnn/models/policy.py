@@ -48,12 +48,9 @@ def build_graph(env, device):
         dim=1,
     )
     # congestion-aware travel-матрица (снимок в cur_time); под FreeFlow == env.time_m (паритет).
-    # ponytail: k² вызовов travel.time на encode; при POMO-ретрейне (k=62) — векторизовать матрицей.
+    # travel.matrix() — векторно (k² вызовов time() душили POMO-ретрейн при k=62); паритет в тестах.
     ff = torch.as_tensor(env.time_m, dtype=torch.float32)  # free-flow t0 [k,k] мин
-    tm = torch.tensor(
-        [[env.travel.time(i, j, env.cur_time) for j in range(k)] for i in range(k)],
-        dtype=torch.float32,
-    )
+    tm = torch.as_tensor(env.travel.matrix(env.cur_time), dtype=torch.float32)
     # канал 1: множитель travel/ff (≡1 под free-flow). diag ff=0 → 1; закрытие (inf) → cap.
     mult = torch.where(ff > 0, tm / ff.clamp_min(1e-8), torch.ones_like(ff))
     mult = torch.where(torch.isinf(mult), torch.full_like(mult, _MULT_CAP), mult)

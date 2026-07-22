@@ -76,6 +76,39 @@ def test_free_flow_node_congestion_zero():
     assert np.allclose(env.travel.node_congestion(env.coords, env.cur_time), 0.0)
 
 
+def test_congestion_matrix_parity_vs_time():
+    """Векторный matrix(at) == поэлементный time(i,j,at): 2 инцидента (конечный+закрытие), offset,
+    узлы у границы зоны и со сдвигом по широте (страж per-node midpoint-lat в _km_to_center)."""
+    center = (10.900, 48.370)
+    coords = np.array(
+        [
+            center,  # 0: центр зоны (dist 0)
+            [10.900, 48.38076],  # 1: ~1.19 км (внутри радиуса 1.2)
+            [10.900, 48.38103],  # 2: ~1.22 км (снаружи)
+            [10.915, 48.362],  # 3: сдвиг по lon+lat (midpoint-lat отличается от clat)
+            [10.880, 48.378],  # 4: зона второго инцидента
+        ],
+        dtype=float,
+    )
+    k = len(coords)
+    rng = np.random.default_rng(0)
+    t0 = rng.uniform(1.0, 30.0, size=(k, k))
+    np.fill_diagonal(t0, 0.0)
+    for mag in (1.0, np.inf):  # конечный вклад + закрытие
+        inc1 = Incident(center, 1.2, mag, t_start_min=10.0, duration_min=90.0)
+        inc2 = Incident((10.880, 48.378), 1.0, 0.7, t_start_min=0.0, duration_min=200.0)
+        ct = CongestionTravel(t0, coords, dow=1, offset_min=20.0, incidents=[inc1, inc2])
+        for at in (0.0, 25.0, 80.0):  # 80 → abs 100 = граница окна inc1 (decay=0 / closure=inf)
+            M = ct.matrix(at)
+            for i in range(k):
+                for j in range(k):
+                    ref = ct.time(i, j, at)
+                    if np.isinf(ref):
+                        assert np.isinf(M[i, j]), (i, j, at, mag)
+                    else:
+                        assert M[i, j] == pytest.approx(ref, rel=1e-9, abs=1e-9), (i, j, at, mag)
+
+
 # ---------- модель (skip без torch/torch-geometric) ----------
 
 torch = pytest.importorskip("torch")
