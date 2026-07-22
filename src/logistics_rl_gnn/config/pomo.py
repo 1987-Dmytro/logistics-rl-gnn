@@ -39,12 +39,20 @@ class POMOConfig:
     cong_offset_max_min: float = 480.0  # старт тура ∈ [08:00, 16:00] (диурнал-разнообразие)
     cong_incidents: tuple[int, int] = (1, 3)  # число инцидентов на t0 (≥1 → coverage, см. advisor)
     cong_inc_dur_min: tuple[float, float] = (180.0, 360.0)  # долгоживущие → сигнал держится эпизод
+    # --- Path B: residual-curriculum (0011-prereg) ---
+    residual_frac: float = 0.5  # доля residual-эпизодов в батче (остаток — полные congestion)
+    res_frac_range: tuple[float, float] = (0.2, 0.8)  # прогресс greedy-префикса (0011)
+    res_train_base: int = 3_000_000  # база сидов residual-train (generate_instance; дизъюнкт 0–9)
+    res_val_range: tuple[int, int] = (4_000_000, 4_000_048)  # residual-val пул отбора (≥48, 0011)
 
     def val_seeds(self) -> range:
         return range(*self.val_range)
 
     def test_seeds(self) -> range:
         return range(*self.test_range)
+
+    def res_val_seeds(self) -> range:
+        return range(*self.res_val_range)
 
     @classmethod
     def for_congestion(cls, **kw) -> POMOConfig:
@@ -56,6 +64,21 @@ class POMOConfig:
             lr=3e-4,
             entropy_beta=0.03,  # чуть больше exploration для fine-tune в новое распределение
             ckpt="results/policy_pomo_congestion.pt",  # отдельно (best.pt/refit не трогаем)
+        )
+        return cls(**{**base, **kw})
+
+    @classmethod
+    def for_residual(cls, **kw) -> POMOConfig:
+        """Path B (0011): warm-start от congestion-best, микс 50% полных + 50% residual-эпизодов.
+        congestion=True → полная половина = congestion-статика (распределение warm-start,
+        anti-forgetting); residual-половина строится генератором отдельно. lr/β как for_congestion
+        (fine-tune в смежное распределение)."""
+        base = dict(
+            congestion=True,
+            warm_start="results/policy_pomo_congestion.pt",
+            lr=3e-4,
+            entropy_beta=0.03,
+            ckpt="results/policy_pomo_residual.pt",  # отдельно (congestion/best/refit не трогаем)
         )
         return cls(**{**base, **kw})
 

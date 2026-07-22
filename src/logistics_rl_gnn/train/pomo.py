@@ -188,15 +188,19 @@ class POMOTrainer:
             return make_dynamic_env(inst, travel=ct)
         return make_env(inst)
 
+    def _batch_instance_env(self, seed):
+        """(node_ids, env) одного инстанса батча. Переопределяется residual-куррикулумом (микс)."""
+        inst = self.sampler.sample(int(seed))
+        return inst.node_ids, self._wrap_env(inst, int(seed))
+
     def train_batch(self, seeds) -> dict:
         """Один шаг: на каждый инстанс — N форс-стартов, shared baseline, градиент-аккумуляция."""
         self.opt.zero_grad()
         b = len(seeds)
         ents, cost_vecs, sampled = [], [], []
         for s in seeds:
-            inst = self.sampler.sample(int(s))
-            sampled.append(inst.node_ids)  # для freshness-хеша эпохи
-            env = self._wrap_env(inst, int(s))
+            ids, env = self._batch_instance_env(int(s))
+            sampled.append(ids)  # для freshness-хеша эпохи
             obs, _ = env.reset(seed=0)
             starts = feasible_starts(env, obs, self.cfg.max_starts)
             if len(starts) < 2:
