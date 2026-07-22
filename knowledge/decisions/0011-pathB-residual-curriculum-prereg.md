@@ -56,8 +56,13 @@ train/val/test = сид-диапазоны, не срезы узлов). Пин�
 |-------|----------|------|
 | ГЕЙТ / деплой full-static | `generate_instance` | 0–9 (гейт: 0–4) |
 | full-static val (anti-forget, монитор) | `InstanceSampler` | 1_000_000–1_000_063 |
-| residual-train (база) | `generate_instance` | ≥ 3_000_000 |
-| residual-val (пул отбора) | `generate_instance` | 4_000_000–4_000_047 |
+| residual-train (база) | `InstanceSampler(62,62)` | ≥ 3_000_000 |
+| residual-val (пул отбора) | `InstanceSampler(62,62)` | 4_000_000–4_000_047 |
+
+Residual-база = `InstanceSampler(n_range=(62,62))` (полный набор 62 аптек, held-out по сиду через
+спрос), НЕ `generate_instance` напрямую: последний перезагружает снапшот с диска (~4 с/вызов) →
+непригоден для тысяч residual-построений за прогон. Тот же снапшот, что гейт (кэш загружается 1 раз);
+геометрия/окна общие, разнятся demand-реализации по сиду. Гейт остаётся на `generate_instance(0–4)`.
 
 Residual-обучение НЕ касается сидов 0–9. Тест `test_residual_seed_disjoint` ассертит: (а) сид-
 диапазоны train/val-residual не пересекают {0–9}; (б) demand-векторы `generate_instance(residual)`
@@ -73,7 +78,8 @@ Residual-обучение НЕ касается сидов 0–9. Тест `test
   ДРУГОМ распределении и мог провалить гейт «не за то».
 - **Прогресс frac ∈ [0.2, 0.8]** — now_min выбирается так, что ровно round(frac·n_cust) обслужено
   (по finish-таймам greedy-исполнения). Затем ОДНО событие (traffic/urgent/breakdown) на now_min.
-- **База residual = full-62** (`generate_instance`) — совпадает с размером гейта (нет size-gap).
+- **База residual = full-62** (`InstanceSampler(62,62)`, кэш; см. seed-таблицу) — совпадает с
+  размером гейта (нет size-gap).
 - **Микс 50/50**: 50% полных congestion-эпизодов (`InstanceSampler`, распределение congestion-best
   — anti-catastrophic-forgetting) + 50% residual-эпизодов. Warm-start = `policy_pomo_congestion.pt`;
   новый файл `results/policy_pomo_residual.pt` (best.pt/congestion/refit НЕ трогаем).
