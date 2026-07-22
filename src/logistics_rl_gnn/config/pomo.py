@@ -32,12 +32,32 @@ class POMOConfig:
     seed: int = 0
     ckpt: str | None = "results/policy_pomo_refit.pt"  # refit → отдельный файл (не трогаем 770.4€)
     eval_seeds: tuple[int, ...] = tuple(range(10))  # full-62 сиды для «Стало» (== «Было» Phase 4)
+    # --- Шаг 2: обучение под congestion (динамика в обучении) ---
+    congestion: bool = False  # True → train/val/test на congestion-инстансах (иначе free-flow)
+    warm_start: str | None = None  # путь к весам для тёплого старта (Шаг 2: static best.pt)
+    cong_dow: int = 1  # DELIVERY_WEEKDAY (вторник) — congestion-профиль дня доставки
+    cong_offset_max_min: float = 480.0  # старт тура ∈ [08:00, 16:00] (диурнал-разнообразие)
+    cong_incidents: tuple[int, int] = (1, 3)  # число инцидентов на t0 (≥1 → coverage, см. advisor)
+    cong_inc_dur_min: tuple[float, float] = (180.0, 360.0)  # долгоживущие → сигнал держится эпизод
 
     def val_seeds(self) -> range:
         return range(*self.val_range)
 
     def test_seeds(self) -> range:
         return range(*self.test_range)
+
+    @classmethod
+    def for_congestion(cls, **kw) -> POMOConfig:
+        """Шаг 2: warm-start от static 770.4€, дообучение под congestion. lr ниже 1e-3 (refit
+        болтало на 1e-3 на ТОМ ЖЕ распределении → warm-start в НОВОЕ рискует разбить basin)."""
+        base = dict(
+            congestion=True,
+            warm_start="results/policy_pomo_best.pt",  # 770.4€ static (арх. совместима)
+            lr=3e-4,
+            entropy_beta=0.03,  # чуть больше exploration для fine-tune в новое распределение
+            ckpt="results/policy_pomo_congestion.pt",  # отдельно (best.pt/refit не трогаем)
+        )
+        return cls(**{**base, **kw})
 
     @classmethod
     def smoke(cls) -> POMOConfig:

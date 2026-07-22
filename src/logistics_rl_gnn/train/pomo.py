@@ -18,7 +18,10 @@ import numpy as np
 import torch
 
 from logistics_rl_gnn.baselines.greedy import greedy_routes
+from logistics_rl_gnn.config import congestion as cg
+from logistics_rl_gnn.env.events import congestion_for, make_dynamic_env
 from logistics_rl_gnn.env.scoring import evaluate_solution
+from logistics_rl_gnn.env.travel import Incident
 from logistics_rl_gnn.env.vrp_env import VRPEnv
 from logistics_rl_gnn.train.instance_sampler import InstanceSampler
 
@@ -39,10 +42,65 @@ def make_env(instance) -> VRPEnv:
     return VRPEnv(instance_fn=lambda s: instance)
 
 
+def sample_congestion_travel(inst, seed: int, cfg):
+    """CongestionTravel на инстансе (Шаг 2): dow=delivery, offset+инциденты из seed (детерминир.).
+
+    Инциденты в УЗЛАХ-аптеках (на графе → задевают маршрутные рёбра = coverage) + долгоживущие
+    (сигнал держится эпизод, не затухает до приезда). t0-снимок кодируется энкодером один раз;
+    reward через evaluate_solution — полное time-dependent время (диурнал+затухание корректны).
+    """
+    rng = np.random.default_rng(int(seed) + 4242)  # декоррелируем от instance/train RNG
+    coords = np.asarray(inst.coords, dtype=float)
+    n = len(coords)
+    offset = float(rng.uniform(0.0, cfg.cong_offset_max_min))
+    n_inc = int(rng.integers(cfg.cong_incidents[0], cfg.cong_incidents[1] + 1))
+    incidents = []
+    for _ in range(n_inc):
+        center = tuple(coords[int(rng.integers(1, n))])  # аптека (не депо=0) → на маршруте
+        closure = bool(rng.random() < cg.INCIDENT_CLOSURE_PROB)
+        mag = np.inf if closure else float(rng.uniform(*cg.INCIDENT_MAG_RANGE))
+        dur = float(rng.uniform(*cfg.cong_inc_dur_min))
+        # t_start=offset (абс-время): инцидент активен с t0 эпизода (decay=1 → виден энкодеру);
+        # иначе offset>dur оставлял бы инцидент истёкшим к старту (coverage-дыра).
+        incidents.append(Incident(center, cg.INCIDENT_RADIUS_KM, mag, offset, dur))
+    return congestion_for(inst, dow=cfg.cong_dow, offset_min=offset, incidents=incidents)
+
+
+def congestion_coverage(envs) -> dict:
+    """Доля инстансов, где ИНЦИДЕНТ реально задевает граф (advisor-гейт, диурнал не в счёт).
+
+    node: node_congestion>0 у ≥1 узла (инцидент в зоне) — чистый инцидент-индикатор (диурнал его
+    не ставит). edge: рёбра выше диурнального фона (median мультипликатора) = инцидент на рёбрах.
+    -> доли ∈ [0,1] + средняя доля задетых рёбер. Мало → поднять cong_incidents/mag/radius.
+    """
+    inc_node, inc_edge, edge_frac = 0, 0, []
+    for env in envs:
+        env.reset(seed=0)
+        ff = np.asarray(env.time_m, dtype=float)
+        tm = np.asarray(env.travel.matrix(env.cur_time), dtype=float)
+        off = ff > 0
+        mult = np.where(np.isinf(tm[off]), 1e9, tm[off]) / ff[off]  # travel/ff на недиаг. рёбрах
+        base = float(np.median(mult))  # ≈ равномерный диурнал c (инциденты — выбросы вверх)
+        hit = mult > base * (1.0 + 1e-3)  # рёбра выше фона = инцидент
+        inc_edge += int(hit.any())
+        edge_frac.append(float(hit.mean()))
+        inc_node += int(float(env.travel.node_congestion(env.coords, env.cur_time).max()) > 0.0)
+    m = len(envs)
+    return {
+        "inc_node_cov": inc_node / m,  # доля с инцидентом в зоне узла (≈1 by construction)
+        "inc_edge_cov": inc_edge / m,  # доля с инцидентом на рёбрах
+        "mean_inc_edge_frac": float(np.mean(edge_frac)),  # ср. доля задетых рёбер
+    }
+
+
 def _heuristic_greedy_cost(env) -> float:
-    """Стоимость эвристики nearest-feasible (Phase 4) — фикс. референс gap (дёшево, без депов)."""
+    """Стоимость эвристики nearest-feasible (Phase 4) под travel СРЕДЫ — фикс. референс gap.
+
+    travel=env.travel: под congestion greedy-маршрут оценён congestion-временем (честный baseline);
+    free-flow → travel.time==time_m → бит-паритет с прежним (evaluate_solution стр.58).
+    """
     routes = greedy_routes(env=env)
-    return -evaluate_solution(routes, env._inst, env._cost_cfg)["reward"]
+    return -evaluate_solution(routes, env._inst, env._cost_cfg, travel=env.travel)["reward"]
 
 
 def feasible_starts(env, obs, max_starts: int) -> list[int]:
@@ -84,7 +142,8 @@ def _decode(policy, env, enc, start: int, mode: str, *, reset_seed: int = 0):
             ents.append(-(p * (p + 1e-12).log()).sum())
         obs, _, term, trunc, info = env.step(int(a.item()))
         done = term or trunc
-    cost = -evaluate_solution(info["routes"], env._inst, env._cost_cfg)["reward"]
+    # travel=env.travel: reward congestion-aware (учит congestion-роутинг); free-flow → паритет
+    cost = -evaluate_solution(info["routes"], env._inst, env._cost_cfg, travel=env.travel)["reward"]
     slp = torch.stack(logps).sum() if logps else torch.zeros((), device=policy.device)
     ent = torch.stack(ents).mean() if ents else torch.zeros((), device=policy.device)
     return cost, slp, ent, info["routes"]
@@ -113,14 +172,21 @@ class POMOTrainer:
         self.eval_sampler = (
             self.sampler if cfg.val_n_range is None else InstanceSampler(n_range=cfg.val_n_range)
         )
-        self.val_envs = [make_env(self.eval_sampler.sample(s)) for s in cfg.val_seeds()]
+        self.val_envs = [self._wrap_env(self.eval_sampler.sample(s), s) for s in cfg.val_seeds()]
         self.val_heur = float(np.mean([_heuristic_greedy_cost(e) for e in self.val_envs]))
         # train-probe: фикс. train-инстансы, gauge train-side gap (memorization = train↓ vs val→)
         probe_seeds = range(cfg.train_range[0], cfg.train_range[0] + _PROBE_N)
-        self.probe_envs = [make_env(self.sampler.sample(s)) for s in probe_seeds]
+        self.probe_envs = [self._wrap_env(self.sampler.sample(s), s) for s in probe_seeds]
         self.probe_heur = float(np.mean([_heuristic_greedy_cost(e) for e in self.probe_envs]))
         self.val_ort = val_ort  # OR-Tools-референс (инъекция из скрипта; None в тестах)
         self._test_built = False
+
+    def _wrap_env(self, inst, seed):
+        """Env инстанса: congestion-travel (Шаг 2, seed→детерм.) либо free-flow."""
+        if self.cfg.congestion:
+            ct = sample_congestion_travel(inst, int(seed), self.cfg)
+            return make_dynamic_env(inst, travel=ct)
+        return make_env(inst)
 
     def train_batch(self, seeds) -> dict:
         """Один шаг: на каждый инстанс — N форс-стартов, shared baseline, градиент-аккумуляция."""
@@ -130,7 +196,7 @@ class POMOTrainer:
         for s in seeds:
             inst = self.sampler.sample(int(s))
             sampled.append(inst.node_ids)  # для freshness-хеша эпохи
-            env = make_env(inst)
+            env = self._wrap_env(inst, int(s))
             obs, _ = env.reset(seed=0)
             starts = feasible_starts(env, obs, self.cfg.max_starts)
             if len(starts) < 2:
@@ -185,7 +251,9 @@ class POMOTrainer:
         """Held-out TEST (ленивое построение) — gap-to-greedy лучшей политики. НЕ для отбора."""
         pol = self.policy if policy is None else policy
         if not self._test_built:
-            self.test_envs = [make_env(self.eval_sampler.sample(s)) for s in self.cfg.test_seeds()]
+            self.test_envs = [
+                self._wrap_env(self.eval_sampler.sample(s), s) for s in self.cfg.test_seeds()
+            ]
             self.test_heur = float(np.mean([_heuristic_greedy_cost(e) for e in self.test_envs]))
             self._test_built = True
         costs = [multistart_greedy(pol, e, self.cfg.max_starts)[0] for e in self.test_envs]
@@ -196,6 +264,11 @@ class POMOTrainer:
         rng = np.random.default_rng(self.cfg.seed)
         torch.manual_seed(self.cfg.seed)
         best, history, frozen, since = float("inf"), [], 0, 0
+        if self.cfg.warm_start:  # floor (advisor): деплой НЕ хуже warm-start под congestion.
+            best = self._validate()["val_cost"]  # стартовый val = планка; бьём только если ниже
+            if self.cfg.ckpt:  # warm-start как floor-чекпойнт (нулевой исход = warm-start)
+                Path(self.cfg.ckpt).parent.mkdir(parents=True, exist_ok=True)
+                torch.save(self.policy.state_dict(), self.cfg.ckpt)
         for epoch in range(self.cfg.epochs):
             ep = [
                 self.train_batch(rng.integers(*self.cfg.train_range, size=self.cfg.batch))
