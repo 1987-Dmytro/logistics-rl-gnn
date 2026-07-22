@@ -2,24 +2,24 @@
 
 # Hot Cache
 
-**Auto-refreshed:** 2026-07-22 18:16:49 (every SessionStart)
+**Auto-refreshed:** 2026-07-22 19:29:46 (every SessionStart)
 **Branch:** `main`
 
 ## 🔀 Recent commits (top 5)
 
 ```
+0bf3051 docs(decision): 0008 inference-search (Phase 6b Шаг 3) + hot/daily
+be79d27 feat(replan): inference-search — sample-K batched decode + PortfolioPlanner (Phase 6b Шаг 3)
 63c3fd3 docs(decision): 0007 congestion-training (Path A) — статика −1.7%, динамика −0.4%
 e0d21cc feat(scripts): run_dynamic --ckpt/--out (переоценка таблицы 0004, Шаг 2 Piece 5)
 f0dc54d feat(scripts): congestion Было/Стало eval + --congestion wiring + tests
-3cfac88 feat(train): POMO congestion training (Шаг 2) — warm-start + floor + sampler
-fe67766 perf(models): vectorize build_graph travel matrix (CongestionTravel.matrix)
 ```
 
 ## 📋 Recent decisions
 
+- `0009-phase6b-local-search-polish.md` — 0009 — Local-search polish (Phase 6b · Шаг 3.5)
 - `0008-phase6b-inference-search.md` — 0008 — Инференс-поиск (Phase 6b · Шаг 3)
 - `0007-phase6b-congestion-training.md` — 0007 — Обучение под congestion (Phase 6b · Шаг 2)
-- `0006-pomo-static.md` — 0006 — POMO на статике (Phase 6b · Шаг 1)
 
 ## 📅 Recent daily logs
 
@@ -31,10 +31,19 @@ fe67766 perf(models): vectorize build_graph travel matrix (CongestionTravel.matr
 
 # Hot Cache — curated
 
-**Last update:** 2026-07-22 19:40 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
+**Last update:** 2026-07-22 21:30 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
 
 ## 🔥 What's Hot
-- **Phase 6b Шаг 3 ЗАКРЫТ — инференс-поиск (БЕЗ обучения, PortfolioPlanner):** **динамический пол
+- **Phase 6b Шаг 3.5 ЗАКРЫТ — local-search polish (БЕЗ обучения):** polish (2-opt+Or-opt intra,
+  relocate+swap inter; full-eval per move → корректно под time-dependent) — **доминирующий рычаг**:
+  polished-portfolio **631.6€**, gap к OR-Tools **+3.4%** (было +25.4% в Шаге 3), крупнейший сдвиг фазы.
+  **НО polish СТИРАЕТ преимущество нейроконструктора:** greedy→652.2, RL→658.9, sample-K→650.9 — все
+  старты сходятся в ~650-659, **RL-edge +1.0% (RL после polish даже ХУЖЕ greedy)**. Выигрыш =
+  классический local search, достижим из greedy-старта → **НЕ доказывает GNN+RL-тезис**. Динамика −2.8%
+  vs greedy — **конфаунд** (polished-portfolio vs непополир. greedy); честно = гарантия **0/25** +
+  латентность **689мс<1с**. **Урок:** feasibility строго как env (пер-клиент возврат ≤ T_max — иначе
+  под асимметр. OSM polish вернёт env-инфеасибл; поймал adversarial-воркфлоу). [[0009-phase6b-local-search-polish]].
+- **Phase 6b Шаг 3 — инференс-поиск (БЕЗ обучения, PortfolioPlanner):** **динамический пол
   ЗАКРЫТ** — портфель { sample-K ∪ RL-multistart ∪ greedy } ≥ greedy на **25/25 событиях** по
   построению (байт-идентичный greedy-кандидат), 0004 re-plan **−0.9%** vs greedy (в 0007 было **+1.6%
   ХУЖЕ**), латентность **430мс <1с** (OR ×5). Статика: portfolio **766.1€** (−7.2% vs greedy, +25.4%
@@ -58,10 +67,11 @@ fe67766 perf(models): vectorize build_graph travel matrix (CongestionTravel.matr
   Единый `env/scoring.py:evaluate_solution` — одна reward-формула для среды И бейзлайнов/политики.
 
 ## ⏭️ Next
-- **Phase 6b по сути закрыта** (Шаг 0 obs · Шаг 1 static/refit · Шаг 2 congestion-обучение · Шаг 3
-  инференс-поиск: пол закрыт, static срезан скромно). Осталось решить: закрывать фазу или Path B.
-- **Path B (residual-дообучение)** — только если нужна победа RL над greedy ПО КАЧЕСТВУ (не только ≥)
-  на больших residual: обучение на распределении re-plan (депо+необслуженные+срочные, окна сдвинуты). Резерв.
+- **Открытый вопрос тезиса**: есть ли ниша, где polish НЕ выравнивает старты (очень большой residual /
+  жёсткий realtime-бюджет, где сходимость polish не успевает)? Иначе честный итог Phase 6b: **вклад RL =
+  латентность (×3–134), по КАЧЕСТВУ классика (multistart, local search) доминирует**.
+- **Path B (residual-дообучение)** — только если нужна победа RL над greedy ПО КАЧЕСТВУ на больших
+  residual: обучение на распределении re-plan (депо+необслуженные+срочные, окна сдвинуты). Резерв.
 - Опц.: закоммитить висящие vault-правки прошлых /save (0006-refit-секция, daily 21/22, index).
 
 ## 🚧 Blockers
