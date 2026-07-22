@@ -88,3 +88,25 @@ def test_determinism_by_seed():
     h1, h2 = run(), run()
     assert [round(r["train_cost"], 4) for r in h1] == [round(r["train_cost"], 4) for r in h2]
     assert [round(r["val_cost"], 4) for r in h1] == [round(r["val_cost"], 4) for r in h2]
+
+
+@_NEED_SNAP
+def test_instance_freshness():
+    # свежесть: 3 подряд train_batch → РАЗНЫЕ node-id наборы (RNG продвигается, не memorize)
+    torch.manual_seed(0)
+    tr = POMOTrainer(VRPPolicy(), _smoke_cfg())
+    rng = np.random.default_rng(0)
+    hashes = [tr.train_batch(rng.integers(0, 100_000, size=3))["inst_hash"] for _ in range(3)]
+    assert len(set(hashes)) == 3, f"инстансы не обновляются между шагами: {hashes}"
+
+
+@_NEED_SNAP
+def test_early_stop_fires(monkeypatch):
+    # early-stop: val только растёт после epoch0 → patience=2 обрывает на epoch2 (history=3)
+    torch.manual_seed(0)
+    tr = POMOTrainer(VRPPolicy(), _smoke_cfg(epochs=20, patience=2))
+    seq = iter([100.0, 101.0, 102.0, 103.0, 104.0])  # монотонно вверх → нет улучшения
+    monkeypatch.setattr(tr, "_validate", lambda: {"val_cost": next(seq), "gap_greedy": 0.0})
+    hist = tr.fit()
+    assert len(hist) == 3, f"early-stop не сработал на patience=2: {len(hist)} эпох (ждём 3)"
+    assert hist[-1]["since_improve"] == 2
