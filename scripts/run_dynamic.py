@@ -51,12 +51,12 @@ def _pkg_version(name: str) -> str:
         return "unknown"
 
 
-def _provenance() -> dict:
+def _provenance(ckpt: Path) -> dict:
     """Артефакты метрики: hash RL-чекпойнта (вне git) + версии решателей (запрет №4)."""
     return {
         "checkpoint": {
-            "path": str(_CKPT),
-            "sha256_16": hashlib.sha256(_CKPT.read_bytes()).hexdigest()[:16],
+            "path": str(ckpt),
+            "sha256_16": hashlib.sha256(ckpt.read_bytes()).hexdigest()[:16],
         },
         "torch": torch.__version__,
         "numpy": np.__version__,
@@ -65,17 +65,17 @@ def _provenance() -> dict:
     }
 
 
-def _load_policy() -> VRPPolicy:
-    if not _CKPT.exists():
-        raise FileNotFoundError(f"нет весов {_CKPT} — сначала `python scripts/train.py`")
+def _load_policy(ckpt: Path) -> VRPPolicy:
+    if not ckpt.exists():
+        raise FileNotFoundError(f"нет весов {ckpt} — сначала обучение (train_pomo.py)")
     pol = VRPPolicy()
-    pol.load_state_dict(torch.load(_CKPT, weights_only=True))
+    pol.load_state_dict(torch.load(ckpt, weights_only=True))
     pol.eval()
     return pol
 
 
-def run(seeds, *, deadline_s: int, n_events: int) -> dict:
-    pol = _load_policy()
+def run(seeds, *, deadline_s: int, n_events: int, ckpt: Path) -> dict:
+    pol = _load_policy(ckpt)
     dow = im.DELIVERY_WEEKDAY
     base_k = im.FLEET_SIZE
     records: list[dict] = []
@@ -159,16 +159,19 @@ def main() -> None:
     ap.add_argument("--seeds", type=int, default=3, help="число сидов (0..N-1)")
     ap.add_argument("--deadline", type=int, default=2, help="дедлайн re-solve OR-Tools, сек")
     ap.add_argument("--events", type=int, default=6, help="событий на сид")
+    ap.add_argument("--ckpt", type=str, default=str(_CKPT), help="RL-чекпойнт (Шаг 2: congestion)")
+    ap.add_argument("--out", type=str, default=str(_OUT), help="выходной JSON")
     args = ap.parse_args()
     if args.seeds < 1:
         ap.error("--seeds ≥ 1")
 
+    ckpt, out = Path(args.ckpt), Path(args.out)
     seeds = list(range(args.seeds))
-    res = run(seeds, deadline_s=args.deadline, n_events=args.events)
+    res = run(seeds, deadline_s=args.deadline, n_events=args.events, ckpt=ckpt)
     agg = {m: _agg(res["records"], m) for m in _METHODS}
     _print_table(agg)
 
-    _OUT.parent.mkdir(parents=True, exist_ok=True)
+    out.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "config": {
             "seeds": seeds,
@@ -180,15 +183,15 @@ def main() -> None:
             "delivery_weekday": im.DELIVERY_WEEKDAY,
             "congestion_tag": cg.CALIBRATION_TAG,
         },
-        "provenance": _provenance(),
+        "provenance": _provenance(ckpt),
         "aggregates": agg,
         "records": res["records"],
         "note": "латентность И качество OR-Tools — wall-clock-dependent (GLS до дедлайна → "
         "быстрее железо = другой маршрут = другой cost/on-time/unserved). Детерминировано "
         "seed+config ТОЛЬКО качество RL/greedy (+ hash чекпойнта). RL free-flow-trained → OOD.",
     }
-    _OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-    print(f"\nсводка → {_OUT} ({len(res['records'])} записей)")
+    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+    print(f"\nсводка → {out} ({len(res['records'])} записей)")
 
 
 if __name__ == "__main__":
