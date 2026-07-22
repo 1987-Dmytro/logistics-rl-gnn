@@ -52,6 +52,42 @@ travel-матрица Аугсбурга** (не евклидова: асимм�
 - Цель Шага 1: статический gap к OR-Tools ≤ прежних +31.6% (REINFORCE 804€). **Полный прогон —
   на сервере**; smoke (мак) лишь демонстрирует механизм (cost↓, |g|>0, разброс стартов).
 
+## Результат полного прогона (сервер base-node, 100 эпох, seed=0)
+
+**«Стало» = 770.4€** (full-62/seeds 0–9, multi-start greedy). Бьёт greedy 825€ на **−6.7%**,
+gap к OR-Tools 611€ = **+26.1%**. Цель достигнута: **+31.6% → +26.1%** (−5.5 п.п. vs REINFORCE
+804€; и обгон greedy глубже: −6.7% против −2.6%). Прогон 6.3ч на Ryzen 9 9900X (CPU, OMP=12),
+100 эпох × 3.8 мин, здоров весь путь (start_std жив, H 1.76→0.12 не 0, |g| clip-биндит,
+no-NaN). Конфиг: batch=16, starts=16, steps/ep=30, lr=1e-3, clip=1.0, n=40–62. Артефакты/
+provenance (версии torch/tg/ortools + hash `79e6ffb4…`) — `results/pomo_summary.json` (вне git).
+Честно: val (n=40–62 подмножества) держался у эвристики (gap_greedy ~0), но full-62 multi-start
+greedy даёт −6.7% vs greedy — качество проявляется на полных инстансах. OR-Tools 611€ пока не
+взят; congestion/dynamics (Шаг 2) + дольше/шире обучение — дальнейший путь.
+
+## Refit (анти-оверфит-протокол, Шаг 1·refit — 2026-07-22)
+
+Прошлый прогон (100 эпох, β=0, без early-stop) дал 770.4€, но без held-out val/test нельзя было
+исключить memorization. Refit добавил протокол: seed-сплит train(0–1M)/val(64)/test(64) непересек.,
+entropy-бонус β=0.01, early-stop best-by-val (patience=15), freshness-хеш инстансов (RNG свеж каждую
+эпоху — тест+лог), train-probe (train-side gap apples-to-apples к val). Веса → `policy_pomo_refit.pt`
+(770.4€ `policy_pomo_best.pt` НЕ тронут). Прогон на base-node, early-stop epoch 23 (best=epoch 8),
+`TRAIN_DONE=0` (чистый выход; `PIPESTATUS[0]` вместо `$?` — иначе ложный 0 как в прошлой сессии).
+
+**Обобщение (всё gap-to-greedy):** train −3.7% · val −3.1% · TEST −1.6% · **deployment (full-62) −5.1%**.
+Все одного знака/порядка, train≈val (Δ0.6пп) → **memorization НЕТ**; deployment (−5.1%) даже ЛУЧШЕ
+val/test → size-extrapolation (n=40–62 → full-62) пошёл в благоприятную сторону (нюанс advisor снят).
+Val дискриминативен (пик −3.1%, не «≈эвристика» как раньше) → лычаг `val_n_range` не понадобился.
+
+**Deployment:** «Стало» **783.2€** (gap greedy −5.1%, **OR-Tools +28.2%**). Provenance (seed+config+
+версии+sha256 `9a06ee7f…`) — `results/pomo_refit_summary.json` (вне git).
+
+**Вердикт — честно:** refit **НЕ побил** прошлый прогон (783.2€ vs 770.4€, +1.7%). Ранний пик (epoch 8),
+early-stop@15 и β срезали глубину, которую 100-эпох прогон добрал за лишние 77 эпох. **Ценность refit
+— не новое число, а ВАЛИДАЦИЯ:** выигрыш RL над greedy (−5%) реален и обобщается (train/val/test/deploy
+согласованы), не артефакт переобучения. Прежний `policy_pomo_best.pt` (770.4€) остаётся деплой-моделью
+(НЕ промоутим). Чтобы побить 770.4 под протоколом — шире patience / ниже lr (val болтается 605–630,
+|g|-всплески 914/1039 → шаг велик) / дольше; либо принять валидацию и идти в Шаг 2 (динамика в обучении).
+
 ## Smoke (мак, 5 эпох, иллюстративно)
 
 `train 333.8→249 · |g|>0 (clip биндит) · start_std 50→12 (baseline жив) · H 1.87→0.79 (не коллапс)`.

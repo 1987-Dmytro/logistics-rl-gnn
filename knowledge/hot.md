@@ -2,17 +2,17 @@
 
 # Hot Cache
 
-**Auto-refreshed:** 2026-07-22 19:29:46 (every SessionStart)
+**Auto-refreshed:** 2026-07-22 19:38:30 (every SessionStart)
 **Branch:** `main`
 
 ## 🔀 Recent commits (top 5)
 
 ```
+49f7de4 docs(decision): 0009 local-search polish (Phase 6b Шаг 3.5) + hot/daily
+1aeb964 feat(replan): local-search polish декодированных маршрутов (Phase 6b Шаг 3.5)
 0bf3051 docs(decision): 0008 inference-search (Phase 6b Шаг 3) + hot/daily
 be79d27 feat(replan): inference-search — sample-K batched decode + PortfolioPlanner (Phase 6b Шаг 3)
 63c3fd3 docs(decision): 0007 congestion-training (Path A) — статика −1.7%, динамика −0.4%
-e0d21cc feat(scripts): run_dynamic --ckpt/--out (переоценка таблицы 0004, Шаг 2 Piece 5)
-f0dc54d feat(scripts): congestion Было/Стало eval + --congestion wiring + tests
 ```
 
 ## 📋 Recent decisions
@@ -31,7 +31,7 @@ f0dc54d feat(scripts): congestion Было/Стало eval + --congestion wiring
 
 # Hot Cache — curated
 
-**Last update:** 2026-07-22 21:30 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
+**Last update:** 2026-07-22 21:45 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
 
 ## 🔥 What's Hot
 - **Phase 6b Шаг 3.5 ЗАКРЫТ — local-search polish (БЕЗ обучения):** polish (2-opt+Or-opt intra,
