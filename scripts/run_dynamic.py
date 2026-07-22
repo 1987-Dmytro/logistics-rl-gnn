@@ -74,11 +74,14 @@ def _load_policy(ckpt: Path) -> VRPPolicy:
     return pol
 
 
-def run(seeds, *, deadline_s: int, n_events: int, ckpt: Path, rl_planner=None) -> dict:
-    pol = _load_policy(ckpt)
+def iter_events(seeds, *, n_events: int):
+    """Итератор re-plan-событий 0004-харнесса → (seed, ev, res, travel, fleet_size).
+
+    Тот же поток, что run(): диурнал-план исполняется от 08:00, на каждом СРАБОТАВШЕМ событии
+    снимаем served из timeline и re-plan-им остаток. Отделён, чтобы ablation (run_ablation.py)
+    крутил ТЕ ЖЕ события с идентичной provenance, но своими системами вместо compare_replan."""
     dow = im.DELIVERY_WEEKDAY
     base_k = im.FLEET_SIZE
-    records: list[dict] = []
     for seed in seeds:
         inst = im.generate_instance(seed=seed)
         exec_travel = congestion_for(inst, dow=dow)  # диурнал (без инцидентов) = timeline плана
@@ -87,8 +90,7 @@ def run(seeds, *, deadline_s: int, n_events: int, ckpt: Path, rl_planner=None) -
         for ev in event_stream(seed, inst, dow, n_events=n_events):
             state.now_min = float(ev.at_min)
             state.served = served_by(exec_routes, inst, exec_travel, ev.at_min)
-            triggered = ev.apply(state)  # мутирует incidents/broken/urgent; диурнал → False
-            if not triggered:
+            if not ev.apply(state):  # мутирует incidents/broken/urgent; диурнал → False
                 continue
             n = len(inst.demand)
             pending = [i for i in range(1, n) if i not in state.served]
@@ -98,22 +100,28 @@ def run(seeds, *, deadline_s: int, n_events: int, ckpt: Path, rl_planner=None) -
             travel = congestion_for(
                 res, dow=dow, offset_min=state.now_min, incidents=state.incidents
             )
-            out = compare_replan(
-                res, travel, pol, fleet_size=state.fleet(base_k), deadline_s=deadline_s,
-                rl_planner=rl_planner,
+            yield seed, ev, res, travel, state.fleet(base_k)
+
+
+def run(seeds, *, deadline_s: int, n_events: int, ckpt: Path, rl_planner=None) -> dict:
+    pol = _load_policy(ckpt)
+    records: list[dict] = []
+    for seed, ev, res, travel, fleet in iter_events(seeds, n_events=n_events):
+        out = compare_replan(
+            res, travel, pol, fleet_size=fleet, deadline_s=deadline_s, rl_planner=rl_planner
+        )
+        for m in _METHODS:
+            records.append(
+                {
+                    "seed": int(seed),
+                    "event": ev.kind,
+                    "at_min": round(ev.at_min, 1),
+                    "n_pending": len(res.demand) - 1,
+                    "fleet": fleet,
+                    "method": m,
+                    **out[m],
+                }
             )
-            for m in _METHODS:
-                records.append(
-                    {
-                        "seed": int(seed),
-                        "event": ev.kind,
-                        "at_min": round(ev.at_min, 1),
-                        "n_pending": len(res.demand) - 1,
-                        "fleet": state.fleet(base_k),
-                        "method": m,
-                        **out[m],
-                    }
-                )
     return {"records": records}
 
 
