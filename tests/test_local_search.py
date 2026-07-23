@@ -16,6 +16,10 @@ import pytest
 from logistics_rl_gnn.config import instance as im
 from logistics_rl_gnn.env.scoring import CostConfig, check_feasible, evaluate_solution
 
+# тесты на VRPEnv()/_real_greedy строят инстанс из реального снапшота — скипаем без него (как
+# test_env/test_model), иначе на голом раннере (снапшот вне git, запрет №1) → FileNotFoundError.
+_NEED_SNAP = pytest.mark.skipif(im._latest_snapshot_dir() is None, reason="нет снапшота")
+
 
 def _mk(time_min, win_min, demand, svc_min, *, n):
     """Контролируемый инстанс: времена/окна/сервис в МИНУТАХ (внутри → сек, как реальный)."""
@@ -88,6 +92,7 @@ def test_check_feasible_per_customer_return_asymmetric():
     assert check_feasible([[0, 1, 2, 0]], inst, t_max_min=120, vehicle_cap=80, fleet_size=8)
 
 
+@_NEED_SNAP
 def test_check_feasible_agrees_with_env_on_real_greedy():
     """Реальный greedy-план из env феасибл по check_feasible (тот же источник семантики)."""
     from logistics_rl_gnn.baselines.greedy import greedy_routes
@@ -154,6 +159,7 @@ def _real_greedy(seed, travel_none=True):
     return routes, env._inst
 
 
+@_NEED_SNAP
 @pytest.mark.parametrize("seed", range(6))
 def test_polish_never_worse_and_feasible(seed):
     """Инвариант: polish ≤ вход И феасибл, на многих реальных сидах (full-62 free-flow)."""
@@ -199,6 +205,7 @@ def test_polish_deterministic_at_convergence():
     assert a[1] <= raw + 1e-9  # реально сошёлся (не хуже входа)
 
 
+@_NEED_SNAP
 def test_polish_respects_budget():
     """Малый бюджет → возврат в пределах бюджета + слак (проверка дедлайна перед каждым eval)."""
     routes, inst = _real_greedy(0)

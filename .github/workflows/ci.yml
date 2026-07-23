@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      # CPU-only. [dev]=ruff/pytest, [data]=numpy/pandas/pyarrow/networkx, [env]=gymnasium.
+      # NOT installed on CI: torch/torch-geometric ([model]) and ortools ([baselines]).
+      # Tests that need them — plus every snapshot-dependent test (no data/snapshots/ on a
+      # bare runner) and durable-JSON parity tests (results/*.json are out of git) — self-skip.
+      - name: Install
+        run: pip install -e ".[dev,data,env]"
+
+      - name: Ruff
+        run: ruff check src scripts tests
+
+      - name: Pytest
+        run: pytest

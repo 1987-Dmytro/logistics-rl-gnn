@@ -17,7 +17,9 @@ _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT / "scripts"))
 
 import final_metrics as fm  # noqa: E402
-import viz_training as vt  # noqa: E402
+
+# viz_training тянет matplotlib (группа [viz]) на уровне модуля → импортим лениво в тесте под
+# importorskip; иначе на голом раннере (без [viz]) collection упадёт ImportError.
 
 _JSON = ("baselines.json", "system_metrics.json", "polish_summary.json")
 _NEED = [_ROOT / "results" / f for f in _JSON]
@@ -74,6 +76,9 @@ def test_eval_system_anchor_matches_0009():
 
 def test_viz_training_parse_deterministic():
     """parse_log детерминирован; на известном логе даёт непустые (epoch,cost) — если лог есть."""
+    pytest.importorskip("matplotlib")  # viz_training тянет matplotlib (группа [viz])
+    import viz_training as vt
+
     log = _ROOT / "results" / "pomo_20260721_1914.log"
     if not log.exists():
         pytest.skip("тренировочный лог вне git")

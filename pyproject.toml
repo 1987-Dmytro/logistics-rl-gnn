@@ -1,19 +1,40 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "logistics-rl-gnn"
-version = "0.0.0"
+version = "0.0.0"  # pre-release; __version__ pinned to 0.0.0 (test_smoke) until a tagged release
 description = "Dynamic vehicle routing (CVRPTW) via Graph Neural Networks + Reinforcement Learning"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Dmytro Gordiyenko", email = "gordiyenko.d@gmail.com" }]
+keywords = [
+    "vehicle-routing", "cvrptw", "reinforcement-learning", "graph-neural-networks",
+    "operations-research", "logistics", "pomo", "or-tools",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: OS Independent",
+]
 
 # NOTE: рантайм-зависимости (torch / torch-geometric / gymnasium / ortools ...)
 # пиним ПОСЛЕ фиксации постановки RL-задачи и целевого железа (CPU vs ROCm).
 dependencies = []
+
+# TODO(publish): replace <user> with the real GitHub path before release.
+# (Must come AFTER all [project] bare keys — a sub-table ends the [project] key list.)
+[project.urls]
+Repository = "https://github.com/<user>/logistics-rl-gnn"
+Issues = "https://github.com/<user>/logistics-rl-gnn/issues"
 
 [project.optional-dependencies]
 dev = [
