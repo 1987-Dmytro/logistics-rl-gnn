@@ -1,9 +1,9 @@
 {
-  "last_update": "2026-07-22T19:38:41",
+  "last_update": "2026-07-23T09:44:58",
   "counts": {
     "architecture": 0,
-    "daily_logs": 3,
-    "decisions": 9,
+    "daily_logs": 4,
+    "decisions": 12,
     "goals": 2,
     "runbooks": 1,
     "templates": 2,
