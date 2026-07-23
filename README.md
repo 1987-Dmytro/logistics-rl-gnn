@@ -37,6 +37,35 @@ re-solve.
 
 ---
 
+## Demo
+
+One command narrates the whole system on real Augsburg data — build the plan, inject a mid-day
+event, react — with every number pulled from the same scorers (no new maths, static and dynamic
+worlds kept apart):
+
+```bash
+python scripts/demo.py --seed 0 --event traffic   # or: breakdown | urgent
+```
+
+```text
+[2/5] Building plan… (portfolio + local-search polish)
+      → 6 vehicles, 168.5 km, on-time 100% · 587.9 € (parity with system_metrics per_seed[0] ✓)
+[3/5] 08:52 — EVENT (traffic): closure near «Tattenbach Apotheke» (radius 1.2 km).
+      2 undelivered stops in zone, vehicles [5, 6] affected.
+[4/5] Re-plan from current state (48 stops left)…
+      • deploy system (portfolio+polish): ~689 ms (durable median) — ×2.9 faster than
+        OR-Tools re-solve (~2001 ms) at comparable quality; never worse than greedy by construction
+[5/5] Residual (congestion + event — a *different* world, not comparable to the static 587.9 €):
+      • without re-plan (drive the old plan through the event): 578.7 €
+      • after re-plan (portfolio): 495.9 €  ·  on-time 100%, 0 unserved
+```
+
+Outputs (interactive maps + route sheet) land in `demo_out/` (git-ignored): `plan_before.html`,
+`route_sheet.md`, and `plan_after.html` (old route dashed, new solid, jam zone in red). Latencies are
+wall-clock of that run; the durable medians come from [`0009`](knowledge/decisions/0009-phase6b-local-search-polish.md).
+
+---
+
 ## Problem
 
 - **Fleet:** `K = 8` vehicles, capacity `Q = 80`, max tour `T_max = 4 h` (multi-tour + EU 561/2006

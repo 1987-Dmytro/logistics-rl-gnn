@@ -160,7 +160,9 @@ def _win(base_dt, e_min, l_min) -> str:
     return f"[{_clock(base_dt, e_min)}–{_clock(base_dt, l_min)}]"
 
 
-def render_md(sheet, inst, names, dyn, *, seed: int, cost_anchor: float) -> str:
+def render_md(sheet, inst, names, dyn=None, *, seed: int, cost_anchor: float) -> str:
+    """dyn=None → статик-лист без приложения динамики (переиспользуется demo.py, у него своя
+    живая portfolio-re-plan-история в терминале + plan_after.html)."""
     base = inst.start_datetime
     T = sheet["totals"]
     L = [
@@ -217,6 +219,10 @@ def render_md(sheet, inst, names, dyn, *, seed: int, cost_anchor: float) -> str:
             f"(езда {tot['drive'] / 60:.1f} / ожид {tot['wait'] / 60:.1f} / "
             f"сервис {tot['service'] / 60:.1f}) · {tot['boxes']} боксов",
         ]
+
+    if dyn is None:  # статик-only лист (demo.py)
+        L.append("")
+        return "\n".join(L)
 
     # --- приложение: динамика ---
     L += [

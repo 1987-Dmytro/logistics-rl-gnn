@@ -26,3 +26,6 @@ outputs/
 /docs/**/*.html
 /docs/assets/*.mp4
 /docs/assets/frames/
+
+# demo.py артефакты (карты/лист) — вне git (запрет №1)
+/demo_out/
