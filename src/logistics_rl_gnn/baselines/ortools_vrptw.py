@@ -35,7 +35,7 @@ def ortools_routes(
     fleet_size: int = im.FLEET_SIZE,
     vehicle_cap: float = im.VEHICLE_CAP,
     t_max_min: float = im.T_MAX_MIN,
-    time_limit_s: int = 30,
+    time_limit_s: float = 30,
 ) -> list[list[int]]:
     """Решение CVRPTW OR-Tools. Возвращает routes (env-формат `[[0,...,0], ...]`)."""
     from ortools.constraint_solver import pywrapcp, routing_enums_pb2
@@ -96,10 +96,14 @@ def ortools_routes(
     params.local_search_metaheuristic = (
         routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
     )
-    params.time_limit.FromSeconds(int(time_limit_s))
+    # бюджет как Duration (sec+nanos): суб-секундные (0.7с) для anytime-кривой (задача #15);
+    # int-совместимо (30 → 30s0ns == прежний FromSeconds(30), парити 0002 цела). seconds/nanos —
+    # версия-робастнее FromMilliseconds. Best-so-far на истечении бюджета → cost wall-clock-bound.
+    params.time_limit.seconds = int(time_limit_s)
+    params.time_limit.nanos = int(round((time_limit_s - int(time_limit_s)) * 1e9))
     params.log_search = False
-    # алгоритм (PATH_CHEAPEST_ARC + GLS) детерминистичен; варьирует лишь число итераций
-    # в бюджете time_limit_s → воспроизводимость через фикс. config (версия+бюджет), не wall-clock.
+    # алгоритм (PATH_CHEAPEST_ARC + GLS) детерминистичен; варьирует лишь число итераций в
+    # бюджете → воспроизводимость через фикс. config (версия+бюджет), не wall-clock (best-so-far).
 
     solution = routing.SolveWithParameters(params)
     if solution is None:

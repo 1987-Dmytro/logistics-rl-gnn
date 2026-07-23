@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from statistics import median
 
 _RES = Path("results")
 _OUT_JSON = _RES / "final_metrics.json"
@@ -151,10 +152,84 @@ def _fmt_md(m: dict) -> str:
     return "\n".join(lines)
 
 
+def paired_stats(or_ps: list[float], sys_ps: list[float]) -> tuple[int, float]:
+    """Парно (те же seeds → σ сложности инстанса сокращается): wins = сколько сидов OR ≤ система,
+    median = медиана per-seed Δ (OR−система, отриц.=OR лучше). Дисциплина 0010, не unpaired σ."""
+    deltas = [o - s for o, s in zip(or_ps, sys_ps, strict=True)]
+    wins = sum(1 for d in deltas if d < 0)
+    return wins, median(deltas)
+
+
+def _timematch_md() -> str:
+    """Секция «Time-matched» (задача #15) из results/timematch.json, если есть. Единый владелец
+    docs/final_metrics.md — эмитим отсюда, не аппендим в run_timematch (иначе перезапись).
+    Парно с per-seed системы (system_metrics.json) — те же инстансы, σ сложности сокращается."""
+    p = _RES / "timematch.json"
+    if not p.exists():
+        return ""
+    tm = json.loads(p.read_text())
+    sr, curve = tm["system_ref"], tm["curve"]
+    or_best = tm["ortools_best_30s_eur"]
+    sc = sr["cost_eur"]  # статик-качество системы (631.6€)
+    dl, dc = sr["dynamic_replan_latency_ms"], sr["dynamic_replan_cost_eur"]
+    n = len(curve[0]["per_seed"])
+    smp = _RES / "system_metrics.json"
+    sys_ps = json.loads(smp.read_text()).get("per_seed_cost_eur") if smp.exists() else None
+
+    rows, pv = [], {}  # pv: per-budget (wins, median) для вердикта
+    for pt in curve:
+        cell = f"| {pt['budget_s']:.1f}с | {pt['cost_mean']:.1f} ± {pt['cost_std']:.0f} "
+        if sys_ps:
+            w, md = paired_stats(pt["per_seed"], sys_ps)
+            pv[pt["budget_s"]] = (w, md)
+            cell += f"| {w}/{n} | {md:+.1f} |"
+        else:  # per-seed системы нет (старый json) — только средние
+            cell += f"| — | {pt['cost_mean'] - sc:+.1f} |"
+        rows.append(cell)
+
+    head = ("| Бюджет OR-Tools | cost, € (±std) | wins/сид vs система | медиана Δ/сид, € |"
+            if sys_ps else "| Бюджет OR-Tools | cost, € (±std) | wins/сид | Δ ср. vs система |")
+    lo_b, hi_b = curve[0]["budget_s"], curve[-1]["budget_s"]
+    if sys_ps:
+        w_lo, md_lo = pv[lo_b]
+        w_hi, md_hi = pv[hi_b]
+        verdict = (
+            f"**Вердикт (парно, те же инстансы — σ сложности сокращается):** к **{hi_b:.0f}с** "
+            f"OR-Tools бьёт систему на **{w_hi}/{n}** сидов, медиана **{md_hi:+.1f}€/сид**; "
+            f"уже к **{lo_b:.1f}с** — {w_lo}/{n} (медиана {md_lo:+.1f}€), т.е. паритет "
+            "<1с. У системы НЕТ статик-преимущества ни по качеству, ни по латентности; "
+            f"её edge — только ДИНАМИКА (re-plan на residual, {dl:.0f}мс/{dc:.0f}€), НЕ статика."
+        )
+    else:
+        verdict = (f"**Вердикт:** OR@30с {or_best:.1f}€ vs система {sc:.1f}€ "
+                   f"({or_best - sc:+.1f}€). Per-seed системы нет — eval_system для парного.")
+    return "\n".join([
+        "",
+        "## Time-matched — anytime OR-Tools vs система (задача #15)",
+        "",
+        "> Даём OR-Tools ТОТ ЖЕ wall-clock и меряем качество на ИДЕНТИЧНЫХ инстансах (full-62, "
+        "seeds 0–9, единый scorer). Отвечает: честен ли латентный edge системы в СТАТИКЕ.",
+        "",
+        head,
+        "|---|---:|---:|---:|",
+        *rows,
+        "",
+        f"**Система (статика):** {sc:.1f}€ при wall-clock **≥{sr['static_wallclock_s']:.0f}с** "
+        f"({sr['static_wallclock_note']}).",
+        "",
+        verdict,
+        "",
+        "<sub>ПАРНО: median-Δ/wins на общих seeds 0–9 (σ инстанса сокращается) — дисциплина 0010, "
+        "не unpaired σ. КАРАНТИН конфляции (Phase 8): 631.6€ — статика (≥30с polish), 689мс — "
+        "динамическая re-plan латентность на residual (cost 827€), не одна точка «631.6€ @ 689мс». "
+        "Провенанс: timematch.json (парити 30с=611.1€/0002) + system_metrics.json. Вне git.</sub>",
+    ])
+
+
 def main() -> None:
     m = build()
     _OUT_JSON.write_text(json.dumps(m, ensure_ascii=False, indent=2))
-    md = _fmt_md(m)
+    md = _fmt_md(m) + _timematch_md()
     _OUT_MD.parent.mkdir(parents=True, exist_ok=True)
     _OUT_MD.write_text(md + "\n")
     print(md)

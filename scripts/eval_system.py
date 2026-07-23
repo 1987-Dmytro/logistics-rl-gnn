@@ -105,6 +105,9 @@ def main() -> None:
         },
         "provenance": rd._provenance(ckpt),
         "durable_cost_anchor_0009": _DURABLE_COST_0009,
+        # per-seed cost для ПАРНОГО сравнения (те же seeds, что OR-Tools в timematch → σ инстанса
+        # сокращается; median-Δ + wins, как 0010). mean(per_seed) == means.cost_eur (парити).
+        "per_seed_cost_eur": [float(-r) for r in acc["reward"]],
         "means": {
             "cost_eur": cost, "distance_km": mean["distance_km"], "time_min": mean["time_min"],
             "vehicles_used": mean["vehicles_used"], "on_time_pct": mean["on_time_pct"],
