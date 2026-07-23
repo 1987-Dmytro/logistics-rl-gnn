@@ -21,6 +21,7 @@ import osmnx as ox  # noqa: E402
 import torch  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent))
+import route_sheet as rs  # noqa: E402
 import run_dynamic as rd  # noqa: E402
 from eval_system import system_routes  # noqa: E402
 
@@ -61,23 +62,41 @@ def _draw_routes(ax, inst, routes, title):
     ax.legend(loc="lower left", fontsize=8)
 
 
-def _folium_map(inst, routes, out: Path):
+def _folium_map(inst, routes, out: Path, names=None):
+    """Интерактивная карта: полилинии по машинам + пронумерованные стопы в порядке объезда,
+    popup (имя аптеки/окно/ETA). ETA/окно — тот же walk, что route_sheet (единая семантика)."""
     import folium
 
+    names = names or {}
     c = inst.coords
+    base = inst.start_datetime
     m = folium.Map(location=[c[0][1], c[0][0]], zoom_start=12, tiles="cartodbpositron")
-    folium.Marker([c[0][1], c[0][0]], tooltip="Депо Phoenix",
+    folium.Marker([c[0][1], c[0][0]], tooltip="Депо PHOENIX",
                   icon=folium.Icon(color="red", icon="star")).add_to(m)
-    for i in range(1, len(inst.demand)):
-        folium.CircleMarker([c[i][1], c[i][0]], radius=3, color="#333", fill=True,
-                            tooltip=f"аптека {i}").add_to(m)
-    v = 0
     pal = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
+    v = 0
     for route in routes:
         if len(route) <= 2:
             continue
-        folium.PolyLine([[c[n][1], c[n][0]] for n in route], color=pal[v % len(pal)],
+        col = pal[v % len(pal)]
+        folium.PolyLine([[c[n][1], c[n][0]] for n in route], color=col,
                         weight=3, opacity=0.85, tooltip=f"машина {v + 1}").add_to(m)
+        stops, _ = rs.walk_route(route, inst)
+        for k, s in enumerate(stops, start=1):  # k = порядок объезда в этой машине
+            n = s["n"]
+            popup = folium.Popup(
+                f"<b>{k}. {rs._label(s['snap'], names)}</b><br>маш. {v + 1} · "
+                f"ETA {rs._clock(base, s['arr_min'])}<br>окно "
+                f"{rs._clock(base, s['e_min'])}–{rs._clock(base, s['l_min'])}",
+                max_width=260,
+            )
+            folium.Marker(
+                [c[n][1], c[n][0]], popup=popup,
+                icon=folium.DivIcon(html=(
+                    f'<div style="font-size:10px;color:#fff;background:{col};border-radius:50%;'
+                    f'width:18px;height:18px;text-align:center;line-height:18px;'
+                    f'border:1px solid #333">{k}</div>'), icon_size=(18, 18), icon_anchor=(9, 9)),
+            ).add_to(m)
         v += 1
     out.parent.mkdir(parents=True, exist_ok=True)
     m.save(str(out))
@@ -92,7 +111,9 @@ def main() -> None:
     args = ap.parse_args()
 
     torch.manual_seed(0)
-    inst = im.generate_instance(seed=args.seed)
+    # инстанс на ТОТ ЖЕ снапшот, что граф-фон и имена (иначе рассинхрон координат/меток при
+    # нескольких снапшотах); _SNAP — снапшот, чей graph.graphml грузим ниже
+    inst = im.generate_instance(snapshot_dir=_SNAP, seed=args.seed)
     gr = greedy_routes(env=make_dynamic_env(inst, travel=None, fleet_size=im.FLEET_SIZE))
     pol = rd._load_policy(_CKPT)
     sysr = system_routes(pol, inst, budget_ms=args.budget_ms, k_samples=128, temp=1.0, rl_starts=16)
@@ -114,7 +135,7 @@ def main() -> None:
     print(f"→ {out}  (greedy {gc:.0f}€ vs система {sc:.0f}€, {sc / gc - 1:+.1%})")
 
     fol = Path(args.folium)
-    _folium_map(inst, sysr, fol)
+    _folium_map(inst, sysr, fol, names=rs.load_names(_SNAP))
     kb = fol.stat().st_size / 1024
     print(f"→ {fol}  ({kb:.0f} KB{' — тяжёлый, вне git' if kb > 200 else ''})")
 

@@ -142,6 +142,24 @@ The portfolio is **never worse than greedy** (0/25 violations, median −16.8 �
 (quality-inferior on its own — see below). **This dynamic reaction latency is the one durable edge of
 the GNN+RL layer.**
 
+### Example route plan
+
+The exact plan behind these numbers is emitted as a human-readable **route sheet**
+(`scripts/route_sheet.py`), whose cost is parity-asserted against `system_metrics` per-seed — it
+describes *precisely* the plan in the tables above. For seed 0 (Tuesday, 62 real pharmacies, depot
+PHOENIX Benzstraße 10) the system dispatches **6 of 8 vehicles**, 476 boxes, 168.5 km, **587.9 €**.
+Vehicle 1 (real OSM pharmacy names, arrivals honoring real `opening_hours` windows):
+
+| # | Pharmacy | Arrival | Window | Load |
+|---:|:--|:--:|:--:|---:|
+| 1 | DrKraus Apotheke am diako | 08:03 | 08:00–18:00 | 9 |
+| 2 | APEX Vital | 08:13 | 08:00–18:00 | 12 |
+| 3 | Gisela Apotheke | 08:24 | 08:00–13:34 | 23 |
+| … | … | … | … | 80 → depot 09:30 |
+
+Full per-vehicle timeline + a dynamic re-plan diff (mid-day traffic event, seed 0) is in
+**[`docs/route_sheet.md`](docs/route_sheet.md)**.
+
 ## What we learned
 
 This project is a **negative result reported honestly**, plus a precise account of where the neural
