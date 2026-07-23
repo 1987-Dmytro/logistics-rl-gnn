@@ -2,24 +2,24 @@
 
 # Hot Cache
 
-**Auto-refreshed:** 2026-07-23 09:56:18 (every SessionStart)
+**Auto-refreshed:** 2026-07-23 14:30:03 (every SessionStart)
 **Branch:** `main`
 
 ## 🔀 Recent commits (top 5)
 
 ```
+0d739dd feat(bench): time-matched OR-Tools anytime vs система (задача #15)
+67a75d6 docs(vault): Phase 6b закрыт (Path B FAIL) + Phase 8 — hot/daily/index
 a614509 feat(viz): Phase 8 — визуализация кейса + финальные метрики Было/Стало
 a174489 docs(decision): 0012 Path B residual-curriculum — гейт FAIL (Phase 6b закрыт)
 c26f6ae feat(ablation): латентная ниша RL — ниши нет (Phase 6b, decision 0010)
-d169002 feat(train): Path B residual-curriculum обучение (Phase 6b, 0011-prereg)
-e93ceb5 docs(decision): 0011 residual-база = InstanceSampler(62,62) (кэш, не reload)
 ```
 
 ## 📋 Recent decisions
 
+- `0013-time-matched-benchmark.md` — 0013 — Time-matched: OR-Tools anytime vs система (задача #15, финал бенчмарков)
 - `0012-pathB-residual-verdict.md` — 0012 — Path B: вердикт по предрегистрации (Phase 6b)
 - `0011-pathB-residual-curriculum-prereg.md` — 0011 — Path B: residual-curriculum, ПРЕДРЕГИСТРАЦИЯ (Phase 6b)
-- `0010-phase6b-ablation-latency-niche.md` — 0010 — Ablation: латентная ниша RL (Phase 6b)
 
 ## 📅 Recent daily logs
 
@@ -31,9 +31,18 @@ e93ceb5 docs(decision): 0011 residual-база = InstanceSampler(62,62) (кэш,
 
 # Hot Cache — curated
 
-**Last update:** 2026-07-23 09:46 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
+**Last update:** 2026-07-23 14:29 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
 
 ## 🔥 What's Hot
+- **Задача #15 — time-matched бенчмарк (финал, ЗАКРЫТ [[0013-time-matched-benchmark]]):** дали
+  OR-Tools ТОТ ЖЕ wall-clock (бюджеты {0.7,2,5,30}с) на ИДЕНТИЧНЫХ инстансах (full-62, seeds 0–9,
+  единый scorer). **Парно (те же seeds → σ инстанса сокращается, дисциплина 0010):** OR выходит на
+  паритет со статик-качеством системы (631.6€) к **<1с (6/10, медиана −4.9€)**, к **30с бьёт 8/10,
+  медиана −18.6€/сид** — притом что система на 631.6€ тратит ≥30с polish. **У системы НЕТ статик-
+  преимущества** ни по качеству, ни по латентности; edge — только ДИНАМИКА (re-plan на residual
+  689мс vs OR 2001мс). **Карантин конфляции (Phase 8):** 631.6€ — статика (≥30с), 689мс — динамика
+  на residual (827€), НЕ одна точка «631.6€ @ 689мс». 30с=610.5€ парити 0002 (wall-clock tol 2€),
+  кривая монотонна. Коммит `0d739dd`, секцию в `docs/final_metrics.md` эмитит final_metrics.py.
 - **Phase 8 — визуализация + финальные метрики (LinkedIn-кейс, ЗАКРЫТ):** карта Аугсбурга Было/Стало
   (+folium), 2 GIF re-plan (пробка+поломка, задетые рёбра красным), кривые обучения всех фаз,
   `final_metrics` (сводка из durable-json, **парити-страж 631.6€=0009**). **Честная таблица:** издержки
@@ -89,13 +98,13 @@ e93ceb5 docs(decision): 0011 residual-база = InstanceSampler(62,62) (кэш,
   Единый `env/scoring.py:evaluate_solution` — одна reward-формула для среды И бейзлайнов/политики.
 
 ## ⏭️ Next
-- **Phase 6b ЗАКРЫТ** — все пути исчерпаны (Path A congestion 0007 · inference-search 0008 · polish
-  0009 · ablation 0010 · Path B residual 0012). Честный итог: **RL по качеству классику не бьёт;
-  устойчивый вклад GNN+RL — латентность мгновенного ответа vs OR-Tools**, не качество vs greedy.
-- **Phase 8 кейс готов** — карты/GIF/кривые/таблица (`docs/`). Дальше (по запросу): writeup/публикация
-  LinkedIn-кейса; опц. деплой-слой (RL-старт как anytime-кандидат в портфеле, качество тянут
-  multistart+polish). Новой RL-«качество»-ветки НЕ открывать без нового рычага (тезис закрыт честно).
-- Опц.: закоммитить висящий vault-housekeeping (`.vault-state.json`, `index.md`).
+- **Phase 6b + бенчмарки ЗАКРЫТЫ** — все пути исчерпаны (Path A 0007 · inference 0008 · polish 0009 ·
+  ablation 0010 · Path B residual 0012 · time-matched 0013). Честный итог: **RL по качеству классику
+  не бьёт, и статик-латентного edge нет (OR-Tools time-matched быстрее к той же цене)**; устойчивый
+  вклад GNN+RL — только ДИНАМИКА (re-plan 689мс vs OR 2001мс), не качество/статика vs greedy/OR.
+- **Phase 8 + финал бенчмарков готовы** — карты/GIF/кривые/таблица + time-matched (`docs/`). Дальше
+  (по запросу): writeup/публикация LinkedIn-кейса (честно: −23.5% к greedy + реакция на событие, НЕ
+  «лучше/быстрее OR-Tools»); опц. деплой-слой. Новой RL-«качество»-ветки НЕ открывать без рычага.
 
 ## 🚧 Blockers
 - нет
