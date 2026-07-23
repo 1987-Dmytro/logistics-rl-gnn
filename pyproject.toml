@@ -44,6 +44,12 @@ model = [
     "torch>=2.2",
     "torch-geometric>=2.5",
 ]
+# Phase 8: визуализация кейса (карты/анимации/кривые). osmnx/networkx уже в [data].
+viz = [
+    "matplotlib>=3.8",
+    "imageio>=2.34",
+    "folium>=0.16",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

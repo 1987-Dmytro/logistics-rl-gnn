@@ -20,3 +20,9 @@ wandb/
 outputs/
 # сводки бейзлайнов/прогонов (сжатая таблица — в decision-записи)
 /results/
+
+# Phase 8 viz: малые PNG/GIF в git (документир. исключение №1 — README-ассеты);
+# тяжёлое/генерируемое/CDN-зависимое (folium HTML, mp4, фреймы) — вне git.
+/docs/**/*.html
+/docs/assets/*.mp4
+/docs/assets/frames/
