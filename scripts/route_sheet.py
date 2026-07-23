@@ -162,7 +162,7 @@ def _win(base_dt, e_min, l_min) -> str:
 
 def render_md(sheet, inst, names, dyn=None, *, seed: int, cost_anchor: float) -> str:
     """dyn=None → статик-лист без приложения динамики (переиспользуется demo.py, у него своя
-    живая portfolio-re-plan-история в терминале + plan_after.html)."""
+    живая portfolio-re-plan-история в терминале + карты 2_incident_no_replan/3_incident_replan)."""
     base = inst.start_datetime
     T = sheet["totals"]
     L = [

@@ -48,21 +48,29 @@ python scripts/demo.py --seed 0 --event traffic   # or: breakdown | urgent
 ```
 
 ```text
-[2/5] Building plan… (portfolio + local-search polish)
+[2/5] Building plan… (portfolio + local-search polish)          ← morning
       → 6 vehicles, 168.5 km, on-time 100% · 587.9 € (parity with system_metrics per_seed[0] ✓)
 [3/5] 08:52 — EVENT (traffic): closure near «Tattenbach Apotheke» (radius 1.2 km).
       2 undelivered stops in zone, vehicles [5, 6] affected.
-[4/5] Re-plan from current state (48 stops left)…
-      • deploy system (portfolio+polish): ~689 ms (durable median) — ×2.9 faster than
-        OR-Tools re-solve (~2001 ms) at comparable quality; never worse than greedy by construction
+[4/5] Re-plan — dispatcher's dilemma A/B/C (one residual world):
+      A do-nothing (drive old plan): 578.7 €
+      B OR-Tools re-solve:           826.5 €  ·  durable median 2001 ms
+      C system (portfolio+polish):   495.9 €  ·  durable median  689 ms
+      → the system's edge is REACTION SPEED (×2.9 vs OR-Tools latency), NOT quality: given a full
+        budget (~30 s) OR-Tools beats the system on quality (durable verdict); at a ~2 s reaction
+        budget OR-Tools has not converged yet.
 [5/5] Residual (congestion + event — a *different* world, not comparable to the static 587.9 €):
-      • without re-plan (drive the old plan through the event): 578.7 €
-      • after re-plan (portfolio): 495.9 €  ·  on-time 100%, 0 unserved
+      • no re-plan (do-nothing): 578.7 €
+      • replan (system):         495.9 €   (saving −82.8 €)  ·  on-time 100%, 0 unserved
 ```
 
-Outputs (interactive maps + route sheet) land in `demo_out/` (git-ignored): `plan_before.html`,
-`route_sheet.md`, and `plan_after.html` (old route dashed, new solid, jam zone in red). Latencies are
-wall-clock of that run; the durable medians come from [`0009`](knowledge/decisions/0009-phase6b-local-search-polish.md).
+Five self-describing artifacts land in `demo_out/` (git-ignored): **`1_morning_plan.html`** (static
+free-flow day), `route_sheet.md`, **`2_incident_no_replan.html`** (drive the old plan through the
+closure), **`3_incident_replan.html`** (our re-plan — old plan a toggleable dashed layer, jam zone in
+red), and **`compare.html`** — the screencast frame: maps #2 | #3 side-by-side with the A/B/C table.
+Every map hop follows real streets (`nx.shortest_path` over the OSM graph, cached). Header prices come
+from the run's scorers; the ×2.9 comes from durable medians in
+[`0009`](knowledge/decisions/0009-phase6b-local-search-polish.md), not that run's wall-clock.
 
 ---
 

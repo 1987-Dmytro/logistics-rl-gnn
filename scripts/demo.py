@@ -3,15 +3,19 @@
     python scripts/demo.py [--seed 0] [--event traffic|breakdown|urgent] [--no-open]
 
 5 шагов человеческим языком: утро → построение плана (парити с system_metrics) → событие (харнесс
-0004) → re-plan (деплой-портфель+polish vs OR-Tools re-solve, живой замер + durable медианы) → итог
-дня. ВСЕ числа берутся из тех же scorer'ов (route_sheet.build_sheet / compare_replan) — статик
-free-flow (587.9€) и динамик-congestion (residual) НЕ смешиваются. Артефакты → demo_out/ (вне git):
-plan_before.html · route_sheet.md · plan_after.html.
+0004) → re-plan (сцена A/B/C: do-nothing vs OR-Tools vs система, живой замер + durable медианы) →
+итог дня. ВСЕ числа берутся из тех же scorer'ов (route_sheet.build_sheet / compare_replan) — статик
+free-flow (587.9€, полный день, карта #1) и динамик-congestion residual (карты #2/#3) — РАЗНЫЕ миры,
+НЕ смешиваются. Артефакты → demo_out/ (вне git), самоописательные имена:
+  1_morning_plan.html · route_sheet.md · 2_incident_no_replan.html · 3_incident_replan.html ·
+  compare.html (два iframe #2|#3 + таблица A/B/C — кадр для скринкаста).
+Хопы карт — реальными улицами (nx.shortest_path по graph.graphml, кэш путей); старый план на #3 —
+выключаемый пунктирный слой; зона инцидента подписана.
 
-Реюз: eval_system.system_routes, route_sheet.{build_sheet,render_md,_assign,_match_labels},
-viz_routes._folium_map, env.events (event_stream/residual/served), replan.compare_replan +
-PortfolioPlanner (тот же механизм, что дал durable 689/2001 мс в polish_summary.json). Ничего нового
-не считаем; latency — wall-clock этого прогона + durable медиана (запрет №4).
+Реюз: eval_system.system_routes, route_sheet.{build_sheet,render_md,walk_route,_assign,
+_match_labels}, env.events (event_stream/residual/served), replan.compare_replan + PortfolioPlanner
+(тот же механизм, что дал durable 689/2001 мс в polish_summary.json). Ничего нового не считаем;
+latency в шапках/таблице — durable медиана (запрет №4), живой wall-clock — только в логе шага 4.
 """
 
 from __future__ import annotations
@@ -23,13 +27,15 @@ import sys
 import webbrowser
 from pathlib import Path
 
+import networkx as nx
+import osmnx as ox
+import pandas as pd
 import torch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import eval_system as es  # noqa: E402
 import route_sheet as rs  # noqa: E402
 import run_dynamic as rd  # noqa: E402
-import viz_routes as vr  # noqa: E402
 
 from logistics_rl_gnn.baselines.greedy import greedy_routes  # noqa: E402
 from logistics_rl_gnn.config import instance as im  # noqa: E402
@@ -50,6 +56,12 @@ _SM = Path("results/system_metrics.json")
 _CFG = CostConfig()
 # durable медианы re-plan (polish_summary.json, dec-0009) — hardware-independent якоря
 _DUR = {"rl": 689, "greedy": 7, "ortools": 2001}
+_SPEEDUP = _DUR["ortools"] / _DUR["rl"]  # ×2.9 реакция система vs OR-Tools (durable)
+# заголовок сцены A/B/C по типу события (клок берётся из данных, не хардкод)
+_EVENT_TITLE = {"traffic": "Straßensperrung", "breakdown": "Ausfall — машина выбыла",
+                "urgent": "Eilauftrag — срочный заказ"}
+# палитра машин (folium) — общая для всех карт демо
+_PAL = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
 
 
 def say(text: str = "") -> None:
@@ -138,40 +150,147 @@ def _continue_old_plan(exec_routes, state, *, idx, drop_vehicle, veh_of):
     return out
 
 
-# ---------- diff-карта plan_after (реюз folium) ----------
+# ---------- дорожная геометрия (реальные улицы, кэш путей) ----------
 
 
-def _folium_diff(inst, old_full, new_full, out: Path, *, incident, names):
-    """Старый маршрут пунктиром, новый сплошным, зона инцидента красным (traffic). Номера/popup —
-    как в viz_routes для нового плана; folium-примитивы, ничего нового не изобретаем."""
+def _stop_to_node(inst) -> dict[int, int]:
+    """stop-индекс инстанса → OSM node_id в graph.graphml (через nodes.parquet, тот же снапшот)."""
+    nd = pd.read_parquet(_SNAP / "nodes.parquet").set_index("stop")["node_id"].astype(int)
+    return {n: int(nd[int(inst.snapshot_stops[n])]) for n in range(len(inst.demand))}
+
+
+def _road_latlon(graph, na: int, nb: int, cache: dict) -> list:
+    """Полилиния хопа na→nb реальными улицами (nx.shortest_path, weight=length) с кэшем. Fallback
+    (нет пути/узла) — прямая по КООРДИНАТАМ УЗЛОВ графа (все вершины остаются узлами графа)."""
+    key = (na, nb)
+    if key not in cache:
+        try:
+            path = nx.shortest_path(graph, na, nb, weight="length")
+            cache[key] = [(graph.nodes[p]["y"], graph.nodes[p]["x"]) for p in path]
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            cache[key] = [(graph.nodes[na]["y"], graph.nodes[na]["x"]),
+                          (graph.nodes[nb]["y"], graph.nodes[nb]["x"])]
+    return cache[key]
+
+
+def _route_polyline(route, stop2node, graph, cache) -> list:
+    """Весь маршрут [0,s1,…,0] → одна полилиния реальными улицами (без дубля узла на стыке)."""
+    pts: list = []
+    for a, b in zip(route, route[1:], strict=False):
+        seg = _road_latlon(graph, stop2node[a], stop2node[b], cache)
+        pts.extend(seg if not pts else seg[1:])
+    return pts
+
+
+def _num_icon(k: int, col: str):
+    import folium
+
+    return folium.DivIcon(html=(
+        f'<div style="font-size:10px;color:#fff;background:{col};border-radius:50%;width:18px;'
+        f'height:18px;text-align:center;line-height:18px;border:1px solid #333">{k}</div>'),
+        icon_size=(18, 18), icon_anchor=(9, 9))
+
+
+# ---------- карта демо (шапка + реальные улицы + слой старого плана + зона) ----------
+
+
+def _render_map(inst, primary, out: Path, *, graph, stop2node, cache, names, price, price_val,
+                title, caption, banner_color, incident=None, old_routes=None, show_eta=False):
+    """Одна карта демо: floating-шапка (крупная цена + титул + what-you-see), депо, зона инцидента
+    (подписана), опц. выключаемый пунктирный слой «старый план», основной план сплошными реальными
+    улицами + пронумерованные стопы (popup: имя; ETA/окно только на #1 free-flow). price_val —
+    машиночитаемая цена в шапке (data-demo-price) для страж-теста «числа шапок == demo-выводу»."""
     import folium
 
     c = inst.coords
+    base = inst.start_datetime
     m = folium.Map(location=[c[0][1], c[0][0]], zoom_start=12, tiles="cartodbpositron")
+    m.get_root().html.add_child(folium.Element(  # шапка; сдвигаем zoom-контролы из-под неё
+        '<style>.leaflet-top{top:76px}</style>'
+        f'<div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:{banner_color};'
+        'color:#fff;padding:8px 16px;font-family:system-ui,-apple-system,sans-serif;'
+        'box-shadow:0 2px 8px rgba(0,0,0,.35)">'
+        f'<span data-demo-price="{price_val:.6f}" style="font-size:22px;font-weight:800">{price}'
+        f'</span><span style="font-size:15px;font-weight:600;margin-left:12px">{title}</span>'
+        f'<div style="font-size:12px;opacity:.92;margin-top:2px">{caption}</div></div>'))
     folium.Marker([c[0][1], c[0][0]], tooltip="Депо PHOENIX",
                   icon=folium.Icon(color="red", icon="star")).add_to(m)
-    if incident is not None:  # зона пробки (traffic) красным
+    if incident is not None:  # зона инцидента красным + подпись
         folium.Circle([incident.center[1], incident.center[0]], radius=incident.radius_km * 1000,
                       color="red", fill=True, fill_opacity=0.12, weight=2,
-                      tooltip="зона инцидента").add_to(m)
-    for route in old_full:  # старый план — серый пунктир
-        if len(route) > 2:
-            folium.PolyLine([[c[n][1], c[n][0]] for n in route], color="#888", weight=2,
-                            opacity=0.6, dash_array="8", tooltip="старый маршрут").add_to(m)
-    pal = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
+                      tooltip=f"зона инцидента (r={incident.radius_km:.1f} км)").add_to(m)
+        folium.Marker([incident.center[1], incident.center[0]], icon=folium.DivIcon(
+            html='<div style="font-size:11px;color:#c00;font-weight:700;white-space:nowrap;'
+                 'transform:translate(-50%,-24px)">🚧 Sperrung</div>')).add_to(m)
+    if old_routes:  # старый план — выключаемый пунктирный слой (off)
+        fg = folium.FeatureGroup(name="старый план (без re-plan)", show=False)
+        for route in old_routes:
+            if len(route) > 2:
+                folium.PolyLine(_route_polyline(route, stop2node, graph, cache), color="#777",
+                                weight=2.5, opacity=0.7, dash_array="6").add_to(fg)
+        fg.add_to(m)
     v = 0
-    for route in new_full:  # новый план — сплошной цветной
+    for route in primary:
         if len(route) <= 2:
             continue
-        col = pal[v % len(pal)]
-        folium.PolyLine([[c[n][1], c[n][0]] for n in route], color=col, weight=3.5, opacity=0.9,
-                        tooltip=f"новый маршрут (маш. {v + 1})").add_to(m)
-        for n in route[1:-1]:
-            folium.CircleMarker([c[n][1], c[n][0]], radius=4, color=col, fill=True, fill_opacity=1,
-                                popup=rs._label(int(inst.snapshot_stops[n]), names)).add_to(m)
+        col = _PAL[v % len(_PAL)]
+        folium.PolyLine(_route_polyline(route, stop2node, graph, cache), color=col, weight=4,
+                        opacity=0.9, tooltip=f"маш. {v + 1}").add_to(m)
+        stops, _ = rs.walk_route(route, inst)
+        for k, s in enumerate(stops, start=1):
+            eta = ""
+            if show_eta:
+                eta = (f"<br>ETA {rs._clock(base, s['arr_min'])} · окно "
+                       f"{rs._clock(base, s['e_min'])}–{rs._clock(base, s['l_min'])}")
+            popup = folium.Popup(f"<b>{k}. {rs._label(s['snap'], names)}</b><br>маш. {v + 1}{eta}",
+                                 max_width=260)
+            folium.Marker([c[s["n"]][1], c[s["n"]][0]], popup=popup,
+                          icon=_num_icon(k, col)).add_to(m)
         v += 1
+    if old_routes:
+        folium.LayerControl(collapsed=False).add_to(m)
     out.parent.mkdir(parents=True, exist_ok=True)
     m.save(str(out))
+
+
+def _write_compare(out: Path, *, left: str, right: str, scene_title: str, rows: list,
+                   takeaway: str):
+    """compare.html — кадр для скринкаста: общий заголовок «Дилемма диспетчера» + таблица A/B/C
+    (все три стоимости в ОДНОМ residual-мире + латентность) + два iframe (#2 слева | #3 справа,
+    одинаковый viewport). Чистый HTML, без новых депов; ссылки на соседние файлы относительные."""
+    trs = "".join(
+        f'<tr><td class="k">{k}</td><td>{lab}</td><td class="num">{cost}</td>'
+        f'<td class="num">{lat}</td><td>{note}</td></tr>'
+        for k, lab, cost, lat, note in rows)
+    css = (
+        "body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f4f5f7}"
+        "header{background:#b23a1e;color:#fff;padding:14px 20px}header h1{margin:0;font-size:22px}"
+        "table{border-collapse:collapse;margin:14px 20px;background:#fff;"
+        "box-shadow:0 1px 4px rgba(0,0,0,.15)}"
+        "th,td{padding:7px 14px;border-bottom:1px solid #e2e4e8;font-size:14px;text-align:left}"
+        "th{background:#2b3138;color:#fff}td.k{font-weight:800;text-align:center}"
+        "td.num{text-align:right;font-variant-numeric:tabular-nums}"
+        ".take{margin:0 20px 12px;font-size:14px;color:#333}"
+        ".maps{display:flex;gap:10px;padding:0 12px 14px}.maps figure{flex:1;margin:0}"
+        ".maps figcaption{font-size:13px;font-weight:600;padding:4px 6px}"
+        "iframe{width:100%;height:78vh;border:1px solid #ccc;border-radius:4px}")
+    thead = ("<tr><th></th><th>сценарий</th><th>стоимость</th><th>реакция</th>"
+             "<th>что это</th></tr>")
+    html = (
+        f'<!doctype html><meta charset="utf-8"><title>{scene_title}</title>\n'
+        f"<style>{css}</style>\n"
+        f"<header><h1>{scene_title}</h1></header>\n"
+        f"<table>{thead}{trs}</table>\n"
+        f'<p class="take">{takeaway}</p>\n'
+        '<div class="maps">\n'
+        " <figure><figcaption>A: do-nothing — едем старым планом сквозь событие "
+        "(B, OR-Tools, — без карты)</figcaption>\n"
+        f'  <iframe src="{left}" title="do-nothing"></iframe></figure>\n'
+        " <figure><figcaption>C: наш re-plan за 0.7&nbsp;с</figcaption>\n"
+        f'  <iframe src="{right}" title="re-plan"></iframe></figure>\n'
+        "</div>\n")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(html, encoding="utf-8")
 
 
 # ---------- главный сценарий ----------
@@ -198,6 +317,17 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool) -> di
     say(f"      Заказы: {n - 1} аптек, {int(inst.demand.sum())} боксов. "
         f"Флот K={im.FLEET_SIZE}, вместимость Q={im.VEHICLE_CAP}, T_max={im.T_MAX_MIN / 60:.0f} ч.")
 
+    # граф Аугсбурга для дорожной геометрии карт (реальные улицы, кэш путей). Тот же снапшот.
+    graph = ox.load_graphml(_SNAP / "graph.graphml")
+    stop2node = _stop_to_node(inst)
+    cache: dict = {}
+    p_morning = out / "1_morning_plan.html"
+    p_sheet = out / "route_sheet.md"
+    p_noreplan = out / "2_incident_no_replan.html"
+    p_replan = out / "3_incident_replan.html"
+    p_compare = out / "compare.html"
+    files = [str(p_morning), str(p_sheet), str(p_noreplan), str(p_replan), str(p_compare)]
+
     # [2/5] построение плана (СТАТИК free-flow — парити с system_metrics)
     _step(2, "Построение плана… (portfolio + local-search polish)")
     routes = es.system_routes(pol, inst, budget_ms=cfg["budget_ms"], k_samples=cfg["k_samples"],
@@ -208,17 +338,22 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool) -> di
     assert abs(sheet["cost_eur"] - anchor) < 0.5, (
         f"ПАРИТИ FAIL: {sheet['cost_eur']:.2f}€ != per_seed[{seed}] {anchor:.2f}€")
     T = sheet["totals"]
-    md_p, before_p = out / "route_sheet.md", out / "plan_before.html"
+    morning_cost = sheet["cost_eur"]
     md = rs.render_md(sheet, inst, names, seed=seed, cost_anchor=anchor)  # статик-only (dyn=None)
-    md_p.write_text(md, encoding="utf-8")
-    vr._folium_map(inst, routes, before_p, names=names)
+    p_sheet.write_text(md, encoding="utf-8")
+    _render_map(inst, routes, p_morning, graph=graph, stop2node=stop2node, cache=cache, names=names,
+                price=f"{morning_cost:.1f} €", price_val=morning_cost,
+                title=f"Утренний план · {base.strftime('%H:%M')} · {n - 1} стопов",
+                caption=f"Статик free-flow, полный день (парити system_metrics per_seed[{seed}]). "
+                        "ДРУГОЙ мир, чем карты после события — напрямую не сравнивать.",
+                banner_color="#2b5797", show_eta=True)
     say(f"      → {T['vehicles_used']} машин, {T['km']:.1f} км, "
-        f"on-time {T['on_time_pct']:.0f}% · **{sheet['cost_eur']:.1f} €** "
+        f"on-time {T['on_time_pct']:.0f}% · **{morning_cost:.1f} €** "
         f"(парити system_metrics per_seed[{seed}] ✓)")
-    say(f"      → карта:  {before_p}")
-    say(f"      → лист:   {md_p}")
+    say(f"      → карта:  {p_morning}")
+    say(f"      → лист:   {p_sheet}")
     if open_maps:
-        webbrowser.open(before_p.resolve().as_uri())
+        webbrowser.open(p_morning.resolve().as_uri())
 
     # --- динамик-мир (congestion): стартовый план исполняется под диурналом ---
     exec_travel = congestion_for(inst, dow=dow)
@@ -231,6 +366,7 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool) -> di
     ev.apply(state)
     veh_of, _ = rs._assign(exec_routes, inst, exec_travel)
     ctx = _event_context(event_kind, ev, inst, state, veh_of, names)
+    scene = f"{ctx['clock']} — {_EVENT_TITLE[event_kind]}. Дилемма диспетчера"
 
     # [3/5] событие
     _step(3, f"{ctx['clock']} — СОБЫТИЕ ({event_kind}):")
@@ -240,24 +376,32 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool) -> di
     pending = [i for i in range(1, n) if i not in state.served]
     if not pending and not state.urgent:  # край: всё обслужено к моменту события
         _step(4, "Re-plan не нужен — весь остаток уже обслужен.")
-        _folium_diff(inst, exec_routes, exec_routes, out / "plan_after.html",
-                     incident=ctx["incident"], names=names)
+        for p, ttl in ((p_noreplan, "без re-plan"), (p_replan, "после re-plan")):
+            _render_map(inst, exec_routes, p, graph=graph, stop2node=stop2node, cache=cache,
+                        names=names, price="0.0 €", price_val=0.0,
+                        title=f"{ctx['clock']} · остаток пуст ({ttl})",
+                        caption="Событие пришло на пустой остаток — план не менялся.",
+                        banner_color="#555", incident=ctx["incident"])
+        _write_compare(p_compare, left=p_noreplan.name, right=p_replan.name, scene_title=scene,
+                       rows=[("—", "остаток пуст", "0.0 €", "—", "план не менялся")],
+                       takeaway="Событие пришло на пустой остаток — re-plan не потребовался.")
         _step(5, "Итог: событие пришло на пустой остаток, план не менялся.")
-        return {"seed": seed, "event": event_kind, "static_cost": sheet["cost_eur"],
-                "n_served": len(state.served), "n_pending": 0, "n_moved": 0,
-                "files": [str(before_p), str(md_p), str(out / "plan_after.html")]}
+        return {"seed": seed, "event": event_kind, "static_cost": morning_cost,
+                "morning_cost": morning_cost, "n_served": len(state.served), "n_pending": 0,
+                "n_moved": 0, "cost_before": 0.0, "cost_after": 0.0, "or_cost": 0.0,
+                "savings": 0.0, "on_time_pct": 100.0, "unserved": 0, "files": files}
 
     res = residual_instance(state)
     fleet = state.fleet(im.FLEET_SIZE)
     travel = congestion_for(res, dow=dow, offset_min=state.now_min, incidents=state.incidents)
 
-    # [4/5] re-plan: деплой-портфель+polish vs OR-Tools re-solve vs greedy (тот же compare_replan)
+    # [4/5] re-plan: сцена A/B/C (do-nothing / OR-Tools / система) — тот же residual, compare_replan
     _step(4, f"Re-plan из текущего состояния ({len(res.demand) - 1} стопов в остатке)…")
     planner = PortfolioPlanner(pol, k_samples=16, temperature=1.0, rl_starts=8,
                                polish_budget_ms=400.0, polish_top_m=5)
     cmp = compare_replan(res, travel, pol, fleet_size=fleet, deadline_s=2,
                          rl_planner=planner, rl_reps=2, warmup=1)
-    new = planner.plan(res, travel, fleet_size=fleet)["routes"]  # маршруты для карты/диффа
+    new = planner.plan(res, travel, fleet_size=fleet)["routes"]  # маршруты для карт
 
     # residual→full маппинг: ТОЧНО как residual_instance.idx (для urgent он добавляет urgent-стоп
     # даже если обслужен → иначе рассинхром нумерации). Реплицируем, не угадываем.
@@ -273,42 +417,77 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool) -> di
     new_veh = {stop: labels[ri] for ri, rt in enumerate(new_routes_full) for stop in rt}
     n_moved = sum(1 for i in new_veh if i in veh_of and new_veh[i] != veh_of[i])
 
+    # стоимости — ВСЕ в одном residual+congestion мире (запрет №3: честный бейзлайн, тот же инстанс)
+    old_res = _continue_old_plan(exec_routes, state, idx=idx,  # idx — та же residual-нумерация
+                                 drop_vehicle=ctx["drop_vehicle"], veh_of=veh_of)
+    cost_before = -evaluate_solution(old_res, res, _CFG, travel=travel)["reward"]  # do-nothing
+    # цена системы — ИМЕННО нарисованного плана `new`, а не отдельного rl-прогона внутри
+    # compare_replan (polish time-budgeted → мог разойтись с картой); из compare_replan — latency
+    q_new = evaluate_solution(new, res, _CFG, travel=travel)
+    cost_after = -q_new["reward"]            # система (портфель+polish) — тот же plan, что на #3
+    or_cost = -cmp["ortools"]["reward"]      # OR-Tools re-solve (тот же residual, deadline 2с)
+    savings = cost_before - cost_after
+    ot, uns = q_new["on_time_pct"], int(q_new["unserved"])
+
     def _lat(mk):
         return f"{cmp[mk]['latency_ms']:.0f} мс этого прогона (durable медиана {_DUR[mk]} мс)"
 
-    say(f"      • деплой-система (портфель+polish): {_lat('rl')}")
-    say(f"      • OR-Tools re-solve (тот же residual): {_lat('ortools')}")
-    say(f"      • greedy (контроль): {_lat('greedy')}")
+    say(f"      A do-nothing (едем старым планом): {cost_before:.1f} €")
+    say(f"      B OR-Tools re-solve: {or_cost:.1f} € · {_lat('ortools')}")
+    say(f"      C система (портфель+polish): {cost_after:.1f} € · {_lat('rl')}")
+    say(f"        greedy-контроль (латентность): {_lat('greedy')}")
     say(f"      Перестроено: {n_moved} стопов перераспределены между машинами "
         f"(метки по max-overlap).")
-    speedup = cmp["ortools"]["latency_ms"] / cmp["rl"]["latency_ms"]
-    say(f"      → реакция портфеля ×{speedup:.1f} быстрее OR-Tools при сопоставимом качестве; "
-        f"портфель по построению не хуже greedy (запрет №3: бейзлайн = greedy + OR-Tools).")
 
-    # [5/5] итог дня — ВСЁ в congestion-мире остатка (НЕ сравнивать со статик-587.9€)
-    old_res = _continue_old_plan(exec_routes, state, idx=idx,  # idx — та же residual-нумерация
-                                 drop_vehicle=ctx["drop_vehicle"], veh_of=veh_of)
-    q_before = evaluate_solution(old_res, res, _CFG, travel=travel)  # «не реагировали»
-    cost_before, cost_after = -q_before["reward"], -cmp["rl"]["reward"]
-    ot, uns = cmp["rl"]["on_time_pct"], int(cmp["rl"]["unserved"])
-    _folium_diff(inst, exec_routes, new_full, out / "plan_after.html",
-                 incident=ctx["incident"], names=names)
+    # честный вердикт (dec-0012/0013): edge системы = СКОРОСТЬ реакции, НЕ качество. OR-Tools при
+    # полном бюджете (~30 с) обгоняет систему по качеству; здесь у OR лишь реакция-бюджет.
+    or_note = ("OR за реакция-бюджет ещё не сошёлся (нужны ~30 с)" if or_cost > cost_after else
+               "здесь OR по цене уже конкурентен; edge системы — скорость реакции")
+    takeaway = (
+        f"Стоимости (один residual-мир): бездействие {cost_before:.1f} € · OR-Tools@~2 с "
+        f"{or_cost:.1f} € · система@0.7 с {cost_after:.1f} €. Ценность системы — СКОРОСТЬ реакции "
+        f"(×{_SPEEDUP:.1f} к OR-Tools по latency), НЕ качество: при полном бюджете (~30 с) OR "
+        f"обгоняет систему по качеству (durable-вердикт). {or_note}.")
+    say(f"      → {takeaway}")
+
+    # [5/5] карты #2/#3 + compare.html (всё в congestion-мире остатка — НЕ статик-587.9€)
+    old_full = [[idx[k] for k in r] for r in old_res]  # остаток старого плана в full-нумерации
+    _render_map(inst, old_full, p_noreplan, graph=graph, stop2node=stop2node, cache=cache,
+                names=names, price=f"{cost_before:.1f} €", price_val=cost_before,
+                title=f"{ctx['clock']} — ехать по-старому",
+                caption=f"Остаток старого плана сквозь событие, без реакции: {cost_before:.1f} € "
+                        "(residual+congestion).", banner_color="#b23a1e", incident=ctx["incident"])
+    if savings >= 0:
+        cap3 = (f"Наш re-plan за 0.7 с: {cost_after:.1f} € — экономия −{savings:.1f} € vs "
+                "«по-старому» (тот же residual-мир).")
+    else:
+        cap3 = (f"Наш re-plan за 0.7 с: {cost_after:.1f} € (Δ {-savings:+.1f} € vs «по-старому»).")
+    _render_map(inst, new_full, p_replan, graph=graph, stop2node=stop2node, cache=cache,
+                names=names, price=f"{cost_after:.1f} €", price_val=cost_after,
+                title="Наш re-plan за 0.7 с", caption=cap3, banner_color="#1a7a3c",
+                incident=ctx["incident"], old_routes=old_full)
+    _write_compare(p_compare, left=p_noreplan.name, right=p_replan.name, scene_title=scene, rows=[
+        ("A", "do-nothing (без реакции)", f"{cost_before:.1f} €", "0 с",
+         "едем старым планом, копятся задержки"),
+        ("B", "OR-Tools re-solve", f"{or_cost:.1f} €", "~2 с (2001 мс)",
+         "пересчёт с нуля, бюджет ~2 с (полное качество — при ~30 с)"),
+        ("C", "наша система (портфель+polish)", f"{cost_after:.1f} €", "0.7 с (689 мс)",
+         f"GNN-старт + polish, реакция ×{_SPEEDUP:.1f}")], takeaway=takeaway)
+
     _step(5, "Итог дня (остаток под congestion+событие — ДРУГОЙ мир, не сравним со статик-планом):")
-    say(f"      • без re-plan (едем старым планом сквозь событие): {cost_before:.1f} €")
-    say(f"      • после re-plan (портфель): {cost_after:.1f} €  "
-        f"(Δ {cost_after - cost_before:+.1f} €)")
+    say(f"      • без re-plan (do-nothing): {cost_before:.1f} €")
+    say(f"      • после re-plan (система): {cost_after:.1f} € (Δ {cost_after - cost_before:+.1f}€)")
     say(f"      • on-time {ot:.0f}% · необслужено {uns} "
         f"{'(все окна соблюдены ✓)' if ot >= 100 and uns == 0 else '(честно из scorer)'}")
-    say(f"      → карта-diff: {out / 'plan_after.html'}  "
-        f"(старый пунктиром, новый сплошным{', зона красным' if ctx['incident'] else ''})")
+    say(f"      → карты: {p_noreplan.name} | {p_replan.name}  ·  кадр: {p_compare}")
     if open_maps:
-        webbrowser.open((out / "plan_after.html").resolve().as_uri())
+        webbrowser.open(p_compare.resolve().as_uri())
 
-    return {"seed": seed, "event": event_kind, "static_cost": sheet["cost_eur"],
-            "n_served": len(state.served), "n_pending": len(res.demand) - 1, "n_moved": n_moved,
-            "cost_before": cost_before, "cost_after": cost_after,
-            "on_time_pct": ot, "unserved": uns,
-            "files": [str(before_p), str(md_p), str(out / "plan_after.html")]}
+    return {"seed": seed, "event": event_kind, "static_cost": morning_cost,
+            "morning_cost": morning_cost, "n_served": len(state.served),
+            "n_pending": len(res.demand) - 1, "n_moved": n_moved, "cost_before": cost_before,
+            "cost_after": cost_after, "or_cost": or_cost, "savings": savings,
+            "on_time_pct": ot, "unserved": uns, "files": files}
 
 
 def main() -> None:
