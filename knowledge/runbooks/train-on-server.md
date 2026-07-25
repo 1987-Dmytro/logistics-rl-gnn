@@ -27,9 +27,12 @@ happen here.
 
 ### 1. Synchronise the code (git)
 
+Since the GitHub publication `main` tracks `github`, so a bare `git push` goes to the public repo,
+**not** to the bare repo the server pulls from. Name the remote here.
+
 ```bash
 # on the Mac
-git push
+git push origin main     # origin = the base-node bare repo; `git push` alone goes to github
 # on the server
 ssh $SERVER
 cd $REPO && git pull

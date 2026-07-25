@@ -40,7 +40,14 @@ c5ea3f6 docs(i18n): regenerate generated docs (route_sheet, final_metrics, demo 
   LinkedIn variants), the README demo transcript is now **abridged from a real run** instead of a
   hand-edited paraphrase (the previous one showed wording `demo.py` no longer prints), a wrong
   `827.3 €` cost-split example → `826.5 €`, and US spelling throughout (`labor`/`kilometers`,
-  `final_metrics.py` regenerated). CI runs on every push — the badge is the live workflow status.
+  `final_metrics.py` regenerated). **CI was red on the first real run** — "green on a bare runner"
+  had been an inference, never an observation: `test_eval_system_anchor_matches_0009` imports
+  `eval_system`, which pulls torch at module level (the runner installs only `.[dev,data,env]`).
+  Fixed with `importorskip("torch")`; a bare runner is now emulated locally (block
+  torch/ortools/matplotlib/folium on `PYTHONPATH`) → 91 passed / 18 skipped. Actions bumped to
+  checkout@v5 + setup-python@v6 (the Node-20 deprecation annotation is gone); the README badge is
+  the live workflow status. **`main` now tracks `github`** — the training runbook says
+  `git push origin main` explicitly.
 - **The compare dashboard is now honest AS A WHOLE (commit `d6463e9`, `pytest 158`):** every number
   in the old A/B/C frame was true and the composition was not. Now: **row G — the greedy re-plan**
   (the realistic no-ML reaction, same residual/travel/fleet/scorer; seed 0: 516.6 € vs the system's
