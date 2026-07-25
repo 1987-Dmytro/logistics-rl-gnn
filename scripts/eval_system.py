@@ -28,7 +28,11 @@ from logistics_rl_gnn.config import instance as im  # noqa: E402
 from logistics_rl_gnn.env.events import make_dynamic_env  # noqa: E402
 from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution  # noqa: E402
 from logistics_rl_gnn.replan.local_search import polish  # noqa: E402
-from logistics_rl_gnn.replan.portfolio import take_best  # noqa: E402
+from logistics_rl_gnn.replan.portfolio import (  # noqa: E402
+    candidate_rows,
+    rl_candidate_mean,
+    take_best,
+)
 from logistics_rl_gnn.train.pomo import multistart_greedy  # noqa: E402
 
 _CKPT = Path("results/policy_pomo_congestion.pt")
@@ -40,24 +44,52 @@ _DURABLE_COST_0009 = 631.6212305905019  # port_pol из polish_summary.json — 
 
 
 def _env(inst):
-    return make_dynamic_env(inst, travel=None, fleet_size=_FLEET)
+    return make_dynamic_env(inst, travel=None)  # K/Q из инстанса (сценарий → meta, дефолт → 8×80)
 
 
-def system_routes(pol, inst, *, budget_ms, k_samples, temp, rl_starts):
+def system_routes(pol, inst, *, budget_ms, k_samples, temp, rl_starts, report=None):
     """Полир. портфель: best-по-cost из {greedy, RL-multi, sample-K}, каждый polish до сходимости.
 
     Идентично отбору port_pol в run_polish.static_polish (0009), но возвращает МАРШРУТЫ победителя
-    (для полного вектора метрик), а не только cost."""
-    gr = greedy_routes(env=_env(inst))
-    _, rl = multistart_greedy(pol, _env(inst), rl_starts)  # None при отсутствии feasible старта
-    envs = [_env(inst) for _ in range(k_samples)]
-    envs[0].reset(seed=0)
-    sk = pol.sample_k(envs, pol.encode(envs[0]), temperature=temp, seed=0)
-    sk_best = take_best(sk, inst, None, _CFG)[0]
-    cands = [c for c in (gr, rl, sk_best) if c is not None]
-    polished = [polish(c, inst, None, budget_ms=budget_ms, fleet_size=_FLEET) for c in cands]
-    best_routes, _ = min(polished, key=lambda rc: rc[1])  # (routes, cost) → min cost
-    return best_routes
+    (для полного вектора метрик), а не только cost.
+
+    pol=None → ablation `--no-model`: RL-кандидаты не порождаются (портфель = greedy+polish).
+    report (опц. dict) наполняется таблицей кандидатов: rows/chosen/cost_model/cost_nomodel/
+    rl_mean. Здесь polish получают ВСЕ кандидаты → «без модели» = polished greedy, точный
+    контрфактуал того же прогона (в отличие от re-plan, где polish берёт лишь топ-M)."""
+    fleet, cap = im.fleet_of(inst)
+    labels, cands = ["greedy"], [greedy_routes(env=_env(inst))]
+    if pol is not None:
+        _, rl = multistart_greedy(pol, _env(inst), rl_starts)  # None при отсутствии feasible старта
+        envs = [_env(inst) for _ in range(k_samples)]
+        envs[0].reset(seed=0)
+        sk = pol.sample_k(envs, pol.encode(envs[0]), temperature=temp, seed=0)
+        sk_scores: list = []
+        sk_best = take_best(sk, inst, None, _CFG, scores_out=sk_scores)[0]
+        if rl is not None:
+            labels.append("rl_greedy")
+            cands.append(rl)
+        labels.append("sample")
+        cands.append(sk_best)
+    polished = [polish(c, inst, None, budget_ms=budget_ms, fleet_size=fleet, vehicle_cap=cap)
+                for c in cands]
+    best_i = min(range(len(polished)), key=lambda i: polished[i][1])  # (routes, cost) → min cost
+    if report is not None:
+        raw = [(i, -evaluate_solution(c, inst, _CFG)["reward"]) for i, c in enumerate(cands)]
+        rows = candidate_rows(labels, raw)
+        for r in rows:  # polish здесь получает КАЖДЫЙ кандидат (в отличие от re-plan)
+            r["polished"] = polished[labels.index(r["source"])][1]
+        if pol is not None:  # sample-K: n/mean по ВСЕМ K роллаутам, не по одному победителю
+            for r in rows:
+                if r["source"] == "sample":
+                    r.update(n=len(sk_scores), cost=min(c for _, c in sk_scores),
+                             mean=sum(c for _, c in sk_scores) / len(sk_scores))
+        report.update(
+            rows=rows, chosen=labels[best_i] + "+polish", cost_model=polished[best_i][1],
+            cost_nomodel=polished[labels.index("greedy")][1],
+            rl_mean=rl_candidate_mean(rows), used_model=pol is not None,
+        )
+    return polished[best_i][0]
 
 
 def main() -> None:

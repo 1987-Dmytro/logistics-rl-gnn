@@ -1,0 +1,36 @@
+# Пятница, только южный куст Аугсбурга, урезанный флот (2 машины).
+# Окна аптек — РЕАЛЬНЫЕ opening_hours на пятницу (аптеки, закрытые в этот день, выпадут — демо
+# скажет об этом явно). Профиль congestion c(dow=4, h) — тот же, что у будней.
+name: friday_south
+weekday: friday
+dispatch_start: "08:00"
+
+pharmacies:
+  - Gisela Apotheke
+  - Tattenbach Apotheke
+  - Johannes-Apotheke
+  - Apotheke Inningen
+  - Easy Apotheke
+  - Vita-Apotheke
+  - Apotheke an der Universität
+  - Lotos-Apotheke
+  - St. Anna Apotheke
+  - Bergius-Apotheke
+  - Kurhaus-Apotheke
+  - Zwölf-Apostel-Apotheke
+  - Hochfeld-Apotheke
+  - Prinz-Karl-Apotheke
+
+fleet: {K: 2, Q: 80}
+
+# крупная пятничная догрузка в двух аптеках (боксы поверх сид-розыгрыша)
+demand:
+  Vita-Apotheke: 14
+  Bergius-Apotheke: 12
+
+events:
+  # 08:50 — половина куста ещё не доставлена: остаток содержательный (7 из 14 стопов)
+  - at: "08:50"
+    type: traffic
+    where: Vita-Apotheke
+    params: {magnitude: 1.6, radius_km: 1.5, duration_min: 45}

@@ -38,7 +38,16 @@ class DynamicVRPEnv(VRPEnv):
 
 
 def make_dynamic_env(instance, *, travel=None, **kw) -> DynamicVRPEnv:
-    """Среда на фикс. residual-инстансе с готовой travel-моделью (или free-flow при travel=None)."""
+    """Среда на фикс. residual-инстансе с готовой travel-моделью (или free-flow при travel=None).
+
+    K/Q/день недели берём ИЗ ИНСТАНСА (meta; дефолтный инстанс несёт глобальные значения) —
+    иначе сценарный флот тихо потерялся бы в def-time дефолтах VRPEnv. Явный kwarg сильнее.
+    """
+    k, q = im.fleet_of(instance)
+    kw.setdefault("fleet_size", k)
+    kw.setdefault("vehicle_cap", q)
+    kw.setdefault("delivery_weekday", int((getattr(instance, "meta", None) or {}).get(
+        "delivery_weekday", im.DELIVERY_WEEKDAY)))
     fac = (lambda env: travel) if travel is not None else None
     return DynamicVRPEnv(instance_fn=lambda s: instance, travel_factory=fac, **kw)
 
@@ -140,6 +149,9 @@ def residual_instance(state: DynamicState):
             "now_min": state.now_min,
             "n_pending": len(pending),
             "broken": state.broken,
+            # флот ОСТАТКА: выбывшие машины недоступны. Иначе среда, созданная от residual без
+            # явного fleet_size, молча планировала бы на исходный K (сейчас все вызовы явные).
+            "fleet_size": state.fleet(int(inst.meta.get("fleet_size", im.FLEET_SIZE))),
         },
     )
 

@@ -1,0 +1,17 @@
+# Понедельник, весь город, полный флот — и ДВА traffic-инцидента подряд в утренний пик.
+# c(dow,h) в понедельник совпадает с вторником (dow-фактор буден = 1.0) — разница с дефолтным
+# прогоном идёт РОВНО от двух инцидентов, не от дня недели.
+name: monday_rush
+weekday: monday
+pharmacies: all
+fleet: {K: 8, Q: 80}
+
+events:
+  - at: "08:25"
+    type: traffic
+    where: Bergius-Apotheke
+    params: {magnitude: 1.8, radius_km: 1.5, duration_min: 60}
+  - at: "08:50"
+    type: traffic
+    where: Ludwigs-Apotheke
+    params: {closure: true, radius_km: 1.2, duration_min: 40}

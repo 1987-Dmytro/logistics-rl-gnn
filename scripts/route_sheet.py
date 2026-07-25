@@ -160,22 +160,33 @@ def _win(base_dt, e_min, l_min) -> str:
     return f"[{_clock(base_dt, e_min)}–{_clock(base_dt, l_min)}]"
 
 
-def render_md(sheet, inst, names, dyn=None, *, seed: int, cost_anchor: float) -> str:
+def render_md(sheet, inst, names, dyn=None, *, seed: int, cost_anchor, scenario=None) -> str:
     """dyn=None → статик-лист без приложения динамики (переиспользуется demo.py, у него своя
-    живая portfolio-re-plan-история в терминале + карты 2_incident_no_replan/3_incident_replan)."""
+    живая portfolio-re-plan-история в терминале + карты 2_incident_no_replan/3_incident_replan).
+
+    cost_anchor=None → кастомный сценарий: durable-якоря нет, шапка это говорит прямо (запрет №4).
+    """
     base = inst.start_datetime
     T = sheet["totals"]
+    fleet_k, fleet_q = im.fleet_of(inst)
+    head = (
+        f"> Сгенерировано `scripts/route_sheet.py` из того же eval-пайплайна, что `system_metrics` "
+        f"(полир. портфель). Cost парити с `results/system_metrics.json` per_seed[{seed}] = "
+        f"**{cost_anchor:.1f} €** — лист описывает РОВНО тот план, что в таблицах README."
+        if cost_anchor is not None else
+        f"> Сгенерировано `scripts/route_sheet.py` тем же полир. портфелем, прогон "
+        f"«{scenario or 'custom'}». Durable-якоря нет: **{sheet['cost_eur']:.1f} €** — "
+        f"число ЭТОГО прогона, не из таблиц README."
+    )
     L = [
         "# Route sheet — план доставки в аптеки Аугсбурга",
         "",
-        f"> Сгенерировано `scripts/route_sheet.py` из того же eval-пайплайна, что `system_metrics` "
-        f"(полир. портфель). Cost парити с `results/system_metrics.json` per_seed[{seed}] = "
-        f"**{cost_anchor:.1f} €** — лист описывает РОВНО тот план, что в таблицах README.",
+        head,
         "",
         f"- **Дата:** {base.strftime('%Y-%m-%d')} ({_WEEKDAY_RU[base.weekday()]}), "
         f"диспетч-окно {base.strftime('%H:%M')}–{_clock(base, inst.horizon_s / 60.0)}",
         f"- **Депо:** PHOENIX, {_DEPOT_ADDR}",
-        f"- **Флот:** K = {im.FLEET_SIZE} машин, вместимость Q = {im.VEHICLE_CAP} боксов, "
+        f"- **Флот:** K = {fleet_k} машин, вместимость Q = {fleet_q:.0f} боксов, "
         f"T_max = {im.T_MAX_MIN / 60:.0f} ч/тур",
         f"- **Инстанс:** seed {seed}, {len(inst.demand) - 1} аптек "
         f"(окна: REAL {inst.tw_source.count('REAL')} / ASSUMED {inst.tw_source.count('ASSUMED')})",
@@ -185,7 +196,7 @@ def render_md(sheet, inst, names, dyn=None, *, seed: int, cost_anchor: float) ->
         "| Стопов | Боксов | Пробег | Время (маршр.) | Машин задействовано | Cost |",
         "|---:|---:|---:|---:|---:|---:|",
         f"| {T['n_stops']} | {T['boxes']} | {T['km']:.1f} км | {T['time_min'] / 60:.1f} ч "
-        f"| {T['vehicles_used']} / {im.FLEET_SIZE} | **{sheet['cost_eur']:.1f} €** |",
+        f"| {T['vehicles_used']} / {fleet_k} | **{sheet['cost_eur']:.1f} €** |",
         "",
         f"Время = езда {T['drive'] / 60:.1f} ч + ожидание окон {T['wait'] / 60:.1f} ч + "
         f"сервис {T['service'] / 60:.1f} ч. On-time {T['on_time_pct']:.0f} % (arrival ≤ l_i, "
@@ -316,7 +327,7 @@ def dynamics_appendix(pol, inst, *, seed: int) -> dict:
     res = residual_instance(state)
     travel = congestion_for(res, dow=dow, offset_min=state.now_min, incidents=state.incidents)
 
-    env = make_dynamic_env(res, travel=travel, fleet_size=state.fleet(im.FLEET_SIZE))
+    env = make_dynamic_env(res, travel=travel, fleet_size=state.fleet(im.fleet_of(inst)[0]))
     # латентность: прогрев + медиана реплик (репрезентативнее cold-start; mode=greedy → тот же план)
     lat: list[float] = []
     new = None

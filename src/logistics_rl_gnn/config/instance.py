@@ -64,15 +64,35 @@ class Instance:
     meta: dict = field(default_factory=dict)
 
 
-def _day_bounds(delivery_weekday: int) -> tuple[datetime, datetime, datetime, int]:
-    """(day_start, day_end, episode_start, horizon_s) для дня доставки."""
+def _day_bounds(delivery_weekday: int, dispatch_open_h=None) -> tuple:
+    """(day_start, day_end, episode_start, horizon_s) для дня доставки.
+
+    dispatch_open_h — час открытия диспетч-окна (сценарий); None → DISPATCH_OPEN_H.
+    """
+    open_h = DISPATCH_OPEN_H if dispatch_open_h is None else float(dispatch_open_h)
     monday = REFERENCE_DATE - timedelta(days=REFERENCE_DATE.weekday())
     day = monday + timedelta(days=delivery_weekday)
     day_start = datetime(day.year, day.month, day.day)
     day_end = day_start + timedelta(days=1)
-    episode_start = day_start + timedelta(hours=DISPATCH_OPEN_H)
-    horizon_s = (DISPATCH_CLOSE_H - DISPATCH_OPEN_H) * 3600
+    episode_start = day_start + timedelta(hours=open_h)
+    horizon_s = int((DISPATCH_CLOSE_H - open_h) * 3600)
     return day_start, day_end, episode_start, horizon_s
+
+
+def fleet_of(instance) -> tuple[int, float]:
+    """(K, Q) инстанса: оверрайд сценария из meta или глобальные дефолты. Единая точка —
+    иначе сценарный флот тихо разъедется с дефолтом 8×80 в env/polish/OR-Tools."""
+    m = getattr(instance, "meta", None) or {}
+    return int(m.get("fleet_size", FLEET_SIZE)), float(m.get("vehicle_cap", VEHICLE_CAP))
+
+
+def dispatch_offset_min(instance) -> float:
+    """Сдвиг congestion-часов, мин: диспетч-окно сценария стартует не в DISPATCH_OPEN_H.
+
+    CongestionTravel мапит abs_min → час как DISPATCH_OPEN_H + abs_min/60 → старт в 09:00
+    требует offset_min=60, иначе профиль c(dow,h) сдвинут на час (тихая ошибка)."""
+    m = getattr(instance, "meta", None) or {}
+    return (float(m.get("dispatch_open_h", DISPATCH_OPEN_H)) - DISPATCH_OPEN_H) * 60.0
 
 
 def real_day_window(oh_string, day_start: datetime, day_end: datetime):
@@ -115,14 +135,15 @@ def _synthetic_window(
     return e, min(float(horizon_s), e + width)
 
 
-def stop_window(oh_string, delivery_weekday: int, rng: np.random.Generator, e_max=None):
+def stop_window(oh_string, delivery_weekday: int, rng: np.random.Generator, e_max=None,
+                dispatch_open_h=None):
     """(source, e_s, l_s) для одного стопа. source: REAL | ASSUMED | EXCLUDED.
 
     e_s,l_s — сек от episode_start (депо open); EXCLUDED → (None, None). rng тратится
     только на ASSUMED-ветку. e_max клипит ТОЛЬКО синтетику (реальные окна не трогаем —
     запрет №5); реальные окна снапшота достижимы (проверено стражем).
     """
-    day_start, day_end, episode_start, horizon_s = _day_bounds(delivery_weekday)
+    day_start, day_end, episode_start, horizon_s = _day_bounds(delivery_weekday, dispatch_open_h)
     status, fo, lc = real_day_window(oh_string, day_start, day_end)
     if status == "CLOSED":
         return "EXCLUDED", None, None
@@ -143,18 +164,29 @@ def _latest_snapshot_dir():
     return dirs[-1] if dirs else None
 
 
-def _check_feasibility(demand, service, time_m, win_e) -> None:
+def _check_feasibility(demand, service, time_m, win_e, fleet_size=None, vehicle_cap=None) -> None:
     """Страж инстанса (пойманный баг Phase 3 → постоянная проверка).
 
     raise если суммарный спрос > K*Q (инфеасибл); warn если утилизация > 0.9;
     assert достижимости каждой аптеки С УЧЁТОМ ОЖИДАНИЯ до e_i: машина стартует в t=0,
     ждёт до e_i, обслуживает, возвращается — max(t[0,i], e_i)+service+t[i,0] <= T_max.
-    demand/service/win_e — списки (депо = индекс 0); time_m — сек.
+    demand/service/win_e — списки (депо = индекс 0); time_m — сек. fleet_size/vehicle_cap
+    (сценарий) — None → ГЛОБАЛЬНЫЕ константы, читаются в теле (monkeypatch-тест жив).
     """
-    cap = FLEET_SIZE * VEHICLE_CAP
+    k = FLEET_SIZE if fleet_size is None else int(fleet_size)
+    q = VEHICLE_CAP if vehicle_cap is None else float(vehicle_cap)
+    cap = k * q
     total = float(sum(demand))
     if total > cap:
-        raise ValueError(f"инфеасибл: спрос {total:.0f} > K*Q={cap} (мало машин/вместимости)")
+        raise ValueError(
+            f"инфеасибл: спрос {total:.0f} > K*Q={k}×{q:.0f}={cap:.0f} (мало машин/вместимости)"
+        )
+    heavy = [i for i in range(1, len(demand)) if float(demand[i]) > q]
+    if heavy:  # оверрайд спроса больше вместимости машины → стоп неотвозим НИКОГДА (тихий unserved)
+        raise ValueError(
+            f"инфеасибл: спрос стопа #{heavy[0]} = {float(demand[heavy[0]]):.0f} > Q={q:.0f} "
+            f"(одна машина такой стоп не увезёт)"
+        )
     util = total / cap
     if util > 0.9:
         warnings.warn(
@@ -171,16 +203,33 @@ def _check_feasibility(demand, service, time_m, win_e) -> None:
 
 
 def generate_instance(
-    snapshot_dir=None, *, seed: int = DEFAULT_SEED, delivery_weekday: int = DELIVERY_WEEKDAY
+    snapshot_dir=None,
+    *,
+    seed: int = DEFAULT_SEED,
+    delivery_weekday: int = DELIVERY_WEEKDAY,
+    include_stops=None,
+    demand_overrides=None,
+    fleet_size=None,
+    vehicle_cap=None,
+    dispatch_open_h=None,
 ) -> Instance:
-    """Инстанс CVRPTW из снапшота с реальными окнами аптек на день доставки."""
+    """Инстанс CVRPTW из снапшота с реальными окнами аптек на день доставки.
+
+    Сценарные оверрайды (config.scenario; ВСЕ None → дефолтный путь байт-в-байт):
+    include_stops — подмножество snapshot-стопов аптек (депо всегда); demand_overrides —
+    {snapshot_stop: боксы} поверх розыгрыша (rng-поток НЕ меняется); fleet_size/vehicle_cap —
+    K/Q сценария (в meta → `fleet_of`, оттуда env/polish/OR-Tools); dispatch_open_h — час
+    открытия диспетч-окна.
+    """
     from logistics_rl_gnn.data import snapshot as snap_mod
 
     d = snapshot_dir or _latest_snapshot_dir()
     if d is None:
         raise FileNotFoundError("нет снапшота — сначала `python scripts/build_snapshot.py`")
     snap = snap_mod.load_snapshot(d, with_graph=False)
-    _, _, episode_start, horizon_s = _day_bounds(delivery_weekday)
+    _, _, episode_start, horizon_s = _day_bounds(delivery_weekday, dispatch_open_h)
+    want = None if include_stops is None else {int(s) for s in include_stops}
+    over = {int(k): int(v) for k, v in (demand_overrides or {}).items()}
     rng = np.random.default_rng(seed)
     depot_stop = int(snap.nodes.loc[snap.nodes.kind == "depot", "stop"].iloc[0])
     t_max_s = T_MAX_MIN * 60.0
@@ -209,10 +258,13 @@ def generate_instance(
             demand.append(0)
             service.append(0.0)
             continue
+        if want is not None and stop_i not in want:
+            continue  # сценарное подмножество: стоп не запрошен (rng не тратим)
         # бюджет раннего окна: успеть подождать до e, обслужить и вернуться в депо в T_max
         ret_s = float(snap.time_matrix[stop_i, depot_stop])
         e_max = t_max_s - SERVICE_MIN * 60.0 - ret_s - REACH_MARGIN_S
-        src, e_s, l_s = stop_window(row.opening_hours, delivery_weekday, rng, e_max=e_max)
+        src, e_s, l_s = stop_window(row.opening_hours, delivery_weekday, rng, e_max=e_max,
+                                    dispatch_open_h=dispatch_open_h)
         if src == "EXCLUDED":
             excluded.append(stop_i)
             continue
@@ -223,12 +275,14 @@ def generate_instance(
         tw_source.append(src)
         win_e.append(e_s)
         win_l.append(l_s)
-        demand.append(int(rng.integers(DEMAND_RANGE[0], DEMAND_RANGE[1] + 1)))
+        drawn = int(rng.integers(DEMAND_RANGE[0], DEMAND_RANGE[1] + 1))  # розыгрыш ВСЕГДА (rng)
+        demand.append(over.get(stop_i, drawn))
         service.append(SERVICE_MIN * 60.0)
 
     idx = np.array(included)
     time_m = snap.time_matrix[np.ix_(idx, idx)]
-    _check_feasibility(demand, service, time_m, win_e)  # страж: обслуживаем и достижим
+    # страж (тот же, что для дефолта): обслуживаем ≤ K*Q и достижим в T_max
+    _check_feasibility(demand, service, time_m, win_e, fleet_size, vehicle_cap)
     return Instance(
         node_ids=node_ids,
         snapshot_stops=included,
@@ -250,6 +304,12 @@ def generate_instance(
             "n_fallback": tw_source.count("ASSUMED"),
             "n_excluded": len(excluded),
             "n_included_stops": len(included),
+            # эффективные K/Q/час-открытия (== дефолты, если сценарий не задал) → fleet_of
+            "fleet_size": FLEET_SIZE if fleet_size is None else int(fleet_size),
+            "vehicle_cap": VEHICLE_CAP if vehicle_cap is None else float(vehicle_cap),
+            "dispatch_open_h": DISPATCH_OPEN_H if dispatch_open_h is None else float(
+                dispatch_open_h
+            ),
         },
     )
 

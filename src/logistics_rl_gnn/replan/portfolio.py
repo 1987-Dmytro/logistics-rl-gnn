@@ -14,27 +14,74 @@ import statistics
 import time
 
 from logistics_rl_gnn.baselines.greedy import greedy_routes
+from logistics_rl_gnn.config import instance as im
 from logistics_rl_gnn.env.events import make_dynamic_env
 from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution
 from logistics_rl_gnn.replan.local_search import polish
 from logistics_rl_gnn.train.pomo import multistart_greedy
 
 
-def take_best(candidates, instance, travel, cfg: CostConfig) -> tuple[list, float, int]:
+def take_best(candidates, instance, travel, cfg: CostConfig, scores_out=None) -> tuple:
     """Лучший маршрут-кандидат ЕДИНЫМ scorer'ом. -> (routes, cost€, idx). cost = −reward.
-    idx — индекс в ИСХОДНОМ списке (None-кандидаты пропускаем, но нумерацию сохраняем)."""
+    idx — индекс в ИСХОДНОМ списке (None-кандидаты пропускаем, но нумерацию сохраняем).
+    scores_out (опц. список) наполняется [(idx, cost€)] — таблица кандидатов даром, из уже
+    посчитанного (новый scoring внутри timed-блока исказил бы латентность)."""
     scored = [
         (i, -evaluate_solution(r, instance, cfg, travel=travel)["reward"])
         for i, r in enumerate(candidates)
         if r is not None
     ]
     assert scored, "нет валидных кандидатов (greedy должен быть всегда)"
+    if scores_out is not None:
+        scores_out.extend(scored)
     i, cost = min(scored, key=lambda ic: ic[1])
     return candidates[i], cost, i
 
 
+# человекочитаемые имена источников кандидатов (демо печатает таблицу этими подписями)
+SOURCE_RU = {"greedy": "greedy-эвристика", "rl_greedy": "RL multistart", "sample": "RL sample-K"}
+_RL_SOURCES = ("rl_greedy", "sample")  # кандидаты, порождённые МОДЕЛЬЮ (ablation --no-model)
+
+
+def candidate_rows(labels, scores) -> list[dict]:
+    """[(idx, cost)] + метки → таблица по источникам: {source, n, cost(лучший), mean, polished}.
+
+    polished=None → источник в polish не попал (top-M): честное «—», НЕ подстановка сырого.
+    """
+    agg: dict[str, dict] = {}
+    for i, cost in scores:
+        base, _, suffix = labels[i].partition("+")
+        r = agg.setdefault(base, {"source": base, "n": 0, "cost": None, "sum": 0.0,
+                                  "polished": None})
+        if suffix:  # «X+polish»
+            r["polished"] = cost if r["polished"] is None else min(r["polished"], cost)
+        else:
+            r["n"] += 1
+            r["sum"] += cost
+            r["cost"] = cost if r["cost"] is None else min(r["cost"], cost)
+    rows = []
+    for base in ("greedy", *_RL_SOURCES):
+        r = agg.get(base)
+        if r is None or r["n"] == 0:
+            continue
+        rows.append({"source": base, "n": r["n"], "cost": r["cost"],
+                     "mean": r["sum"] / r["n"], "polished": r["polished"]})
+    return rows
+
+
+def rl_candidate_mean(rows) -> float | None:
+    """Средняя сырая стоимость кандидатов МОДЕЛИ (weight-swap-страж). Нет RL-строк → None."""
+    rl = [r for r in rows if r["source"] in _RL_SOURCES]
+    n = sum(r["n"] for r in rl)
+    return None if n == 0 else sum(r["mean"] * r["n"] for r in rl) / n
+
+
 class PortfolioPlanner:
-    """RL-портфель re-plan: sample-K ∪ RL-multistart-greedy ∪ greedy → best (≤ greedy)."""
+    """RL-портфель re-plan: sample-K ∪ RL-multistart-greedy ∪ greedy → best (≤ greedy).
+
+    policy=None → ablation `--no-model`: RL-кандидаты НЕ порождаются вовсе (портфель = greedy
+    (+polish)); честный контрфактуал «сколько даёт модель», а не тихий фолбэк.
+    """
 
     def __init__(
         self,
@@ -59,6 +106,8 @@ class PortfolioPlanner:
         """Все кандидаты (детерминированы seed): (greedy, rl-multistart, [K sample-роллаутов])."""
         # greedy-эвристика — ИДЕНТИЧНА методу greedy в таблице (на этом держится гарантия ≤ greedy)
         gr = greedy_routes(env=make_dynamic_env(instance, travel=travel, fleet_size=fleet_size))
+        if self.policy is None:  # --no-model: портфель БЕЗ кандидатов модели
+            return gr, None, []
         # RL multistart-greedy (POMO distinct-first-starts — основной источник качества)
         env = make_dynamic_env(instance, travel=travel, fleet_size=fleet_size)
         _, rl_routes = multistart_greedy(self.policy, env, self.rl_starts)
@@ -86,17 +135,21 @@ class PortfolioPlanner:
             ]
             top = [i for i, _ in sorted(scored, key=lambda ic: ic[1])[: self.polish_top_m]]
             per = self.polish_budget_ms / max(1, len(top))
+            _, cap = im.fleet_of(instance)  # Q сценария (иначе def-time дефолт polish)
             for i in top:  # исходные кандидаты остаются в пуле → гарантия ≤ greedy цела
-                pr, _ = polish(cands[i], instance, travel, budget_ms=per, fleet_size=fleet_size)
+                pr, _ = polish(cands[i], instance, travel, budget_ms=per, fleet_size=fleet_size,
+                               vehicle_cap=cap)
                 cands.append(pr)
                 labels.append(labels[i] + "+polish")
-        best_routes, best_cost, idx = take_best(cands, instance, travel, cfg)
+        scores: list = []
+        best_routes, best_cost, idx = take_best(cands, instance, travel, cfg, scores_out=scores)
         return {
             "routes": best_routes,
             "cost": best_cost,
             "greedy_cost": greedy_cost,  # гарантия: best_cost ≤ greedy_cost (тот же scorer)
             "source": labels[idx],
             "n_candidates": sum(c is not None for c in cands),
+            "rows": candidate_rows(labels, scores),  # даром из уже посчитанного (см. take_best)
         }
 
     def plan(self, instance, travel, *, fleet_size: int, reps: int = 1, warmup: int = 0) -> dict:

@@ -72,6 +72,38 @@ Every map hop follows real streets (`nx.shortest_path` over the OSM graph, cache
 from the run's scorers; the ×2.9 comes from durable medians in
 [`0009`](knowledge/decisions/0009-phase6b-local-search-polish.md), not that run's wall-clock.
 
+Every run opens with a **provenance banner** (checkpoint path · sha256 · training date · decision
+record) and hard-fails if that sha does not match the provenance of the durable summary the printed
+numbers come from — missing weights stop the run instead of silently falling back to a heuristic.
+Steps `[2/5]` and `[4/5]` print the portfolio's **candidate table** (source → cost → who won → after
+polish), and `--no-model` runs the same portfolio *without* RL candidates so the model's contribution
+for that run is a measured number, not a claim.
+
+### Custom scenarios
+
+`--scenario` describes any dispatcher's day on the same real data: weekday (time windows come from
+the pharmacies' real `opening_hours` for that day, plus the `c(dow,h)` congestion profile), the
+subset of pharmacies (names are fuzzy-matched against the snapshot, or use stop-ids / `all`), demand
+overrides, fleet `K`/`Q`, and the event chain. Same pipeline, same renders, same guards
+(`Σdemand ≤ K·Q`, reachability in `T_max`). Without the flag the default Tuesday run is unchanged.
+
+```bash
+python scripts/demo.py --scenario scenarios/friday_south.yaml --no-open   # subset, 2 vehicles
+python scripts/demo.py --scenario scenarios/monday_rush.yaml  --no-open   # all 62, double jam
+```
+
+```yaml
+name: friday_south            # scenarios/friday_south.yaml
+weekday: friday               # 0..6 or monday..sunday
+dispatch_start: "08:00"
+pharmacies: [Vita-Apotheke, Bergius-Apotheke, Lotos-Apotheke]   # names / stop-ids / all
+demand: {Vita-Apotheke: 14}   # boxes, overrides the seeded draw
+fleet: {K: 2, Q: 80}
+events:
+  - {at: "08:50", type: traffic, where: Vita-Apotheke,          # breakdown | urgent
+     params: {magnitude: 1.6, radius_km: 1.5, duration_min: 45}}   # closure: true → δ=∞
+```
+
 ---
 
 ## Problem
@@ -307,8 +339,9 @@ ruff check src scripts tests
 ## Repository layout
 
 ```
-src/logistics_rl_gnn/   env · models (GNN+attention) · train (POMO) · baselines (greedy, OR-Tools) · replan (portfolio, polish) · data (OSM)
+src/logistics_rl_gnn/   env · models (GNN+attention) · train (POMO) · baselines (greedy, OR-Tools) · replan (portfolio, polish) · data (OSM) · config/scenario (YAML days)
 scripts/                run_* (experiments) · viz_* (figures) · build_snapshot · final_metrics
+scenarios/              custom dispatcher days (YAML) consumed by `demo.py --scenario`
 tests/                  pytest suite (self-skips without snapshot/ortools/torch)
 knowledge/decisions/    numbered decision records (0001–0013) — the honest audit trail
 docs/                   final_metrics.md · assets/ (committed figures)

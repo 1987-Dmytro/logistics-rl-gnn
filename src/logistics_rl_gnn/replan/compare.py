@@ -19,6 +19,7 @@ import torch
 
 from logistics_rl_gnn.baselines.greedy import greedy_routes
 from logistics_rl_gnn.baselines.ortools_vrptw import ortools_routes
+from logistics_rl_gnn.config import instance as im
 from logistics_rl_gnn.env.events import make_dynamic_env
 from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution
 
@@ -83,9 +84,11 @@ def compare_replan(
         return greedy_routes(env=env)
 
     snap = replace(residual, time_matrix=_snapshot_matrix_s(travel, n))
+    _, cap = im.fleet_of(residual)  # Q сценария (K приходит параметром) — иначе def-time дефолт
 
     def ort():
-        return ortools_routes(snap, fleet_size=fleet_size, time_limit_s=deadline_s)
+        return ortools_routes(snap, fleet_size=fleet_size, vehicle_cap=cap,
+                              time_limit_s=deadline_s)
 
     out: dict = {}
     for name, fn, reps, wu in [

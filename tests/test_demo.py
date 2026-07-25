@@ -76,6 +76,16 @@ def test_demo_end_to_end_seed0(tmp_path):
     assert 0.0 < s["cost_after"] < 5000.0
     assert s["n_moved"] <= s["n_pending"]
 
+    # вклад модели измерен ОБЕИМИ сторонами и по разным механизмам: план дня — polish каждому
+    # кандидату в одном прогоне, re-plan — ОТДЕЛЬНЫЙ портфель без RL с тем же полным бюджетом.
+    c = s["contribution"]
+    assert all(c[k] is not None for k in ("plan_without", "plan_with", "replan_without",
+                                          "replan_with"))
+    assert c["plan_with"] <= c["plan_without"] + 1e-9  # модель лишь ДОБАВЛЯЕТ кандидатов в пул
+    # знак re-plan НЕ фиксируем: «модель ухудшила» — допустимый и наблюдаемый исход (dec-0012),
+    # ради него сторона «без модели» и меряется отдельно, а не берётся из портфеля с моделью
+    assert c["replan_without"] != s["cost_before"]
+
 
 def test_continue_old_plan_numbering():
     """policy-free страж рассинхрона нумерации за ~1с: _continue_old_plan нумерует по ПЕРЕДАННОМУ
