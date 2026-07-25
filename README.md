@@ -87,6 +87,13 @@ subset of pharmacies (names are fuzzy-matched against the snapshot, or use stop-
 overrides, fleet `K`/`Q`, and the event chain. Same pipeline, same renders, same guards
 (`Σdemand ≤ K·Q`, reachability in `T_max`). Without the flag the default Tuesday run is unchanged.
 
+> The policy was trained on Tuesday only (`dow = 1`: Tuesday windows and profile; episodes varied the
+> dispatch hour, incidents and `n`, never the weekday). Mon–Fri share the same `c(dow,h)` amplitude,
+> so weekday scenarios differ from training only in the opening-hours windows; Sat/Sun (amplitude
+> 0.7/0.5) are out of distribution. Either way the RL start is only a *candidate* — the portfolio
+> takes the best of `{greedy, RL-multistart, sample-K}` under one scorer, so a scenario the policy
+> generalizes poorly to is fenced by the greedy baseline, never worse than it.
+
 ```bash
 python scripts/demo.py --scenario scenarios/friday_south.yaml --no-open   # subset, 2 vehicles
 python scripts/demo.py --scenario scenarios/monday_rush.yaml  --no-open   # all 62, double jam
