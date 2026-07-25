@@ -163,12 +163,16 @@ def _durable() -> dict:
             f"NO DURABLE SUMMARY: {p} (summaries live outside git — prohibition #1). The dashboard "
             f"cites its reaction medians and the 25-event context: run scripts/run_polish.py first."
         )
-    d = json.loads(p.read_text())["dynamic"]
+    j = json.loads(p.read_text())
+    d = j["dynamic"]
     a, g = d["aggregates"], d["guarantee"]
+    means = j["static"]["means"]  # polished per-start means, seeds 0-9 (the aggregate context)
     return {"lat": {m: float(a[m]["latency_ms_median"]) for m in ("rl", "greedy", "ortools")},
             "cost": {m: float(a[m]["cost_eur_mean"]) for m in ("rl", "greedy", "ortools")},
             "n_events": int(g["n_events"]), "median_delta": float(g["median_delta_eur"]),
-            "violations": int(g["violations"])}
+            "violations": int(g["violations"]),
+            "static_pol": {"greedy": float(means["g_pol"]), "rl": float(means["r_pol"]),
+                           "sample_k": float(means["s_pol"])}}
 
 
 def _print_candidates(rows: list, chosen: str, *, note: str = "") -> None:
@@ -348,7 +352,23 @@ def _gap_line(title: str, without, with_model, note: str = "") -> str:
             f"→ {-d:+.1f} € ({-pct:+.1f} %){note}")
 
 
-def _print_contribution(plan_report, plan_out, *, anchor, use_model, budget_ms, seed,
+def _plan_gap_caption(dur, *, seed: int, favorable: bool) -> str:
+    """Aggregate context under the single-seed day-plan gap (durable dec-0009 static means).
+
+    One seed cannot carry the day-plan verdict: after polish every start lands in the same band,
+    so the aggregate edge is ~0 whatever this seed shows. Numbers come from the durable summary,
+    not from the text.
+    """
+    p = dur["static_pol"]
+    lo, hi = math.floor(min(p.values())), math.ceil(max(p.values()))
+    fav = "" if favorable else "not "
+    return (f"          (seed {seed} is {fav}favorable to the model; across "
+            f"seeds 0–9 polished starts converge to ~{lo}–{hi} € — greedy {p['greedy']:.1f} vs "
+            f"sample-K {p['sample_k']:.1f}, dec-0009 — so the aggregate day-plan edge is ≈0, "
+            f"consistent with the negative verdict)")
+
+
+def _print_contribution(plan_report, plan_out, *, anchor, use_model, budget_ms, seed, dur,
                         replan_nomodel=None) -> dict:
     """This run's model contribution = the portfolio with RL candidates vs the same without them.
 
@@ -374,8 +394,10 @@ def _print_contribution(plan_report, plan_out, *, anchor, use_model, budget_ms, 
     rep_w = plan_out["cost"] if use_model else None
     rep_note = "" if use_model else "  (the 'with the model' side — a run without the flag)"
     say("      This run's model contribution (portfolio WITHOUT RL candidates vs with them):")
-    lines = [_gap_line("day plan", plan_wo, plan_w, note),
-             _gap_line("re-plan  ", rep_wo, rep_w, rep_note)]
+    lines = [_gap_line("day plan", plan_wo, plan_w, note)]
+    if plan_wo is not None and plan_w is not None:  # the caption qualifies a measured gap only
+        lines.append(_plan_gap_caption(dur, seed=seed, favorable=plan_wo > plan_w))
+    lines.append(_gap_line("re-plan  ", rep_wo, rep_w, rep_note))
     for ln in lines:
         say(ln)
     return {"plan_without": plan_wo, "plan_with": plan_w,
@@ -894,7 +916,7 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     say(f"      • on-time {ot:.0f}% · unserved {uns} "
         f"{'(every window met ✓)' if ot >= 100 and uns == 0 else '(honestly from the scorer)'}")
     contrib = _print_contribution(plan_report, plan_out, anchor=anchor, use_model=use_model,
-                                  budget_ms=cfg["budget_ms"], seed=seed,
+                                  budget_ms=cfg["budget_ms"], seed=seed, dur=dur,
                                   replan_nomodel=rep_nomodel)
     say(f"      → maps: {p_noreplan.name} | {p_replan.name}  ·  frame: {p_compare}")
     if open_maps:

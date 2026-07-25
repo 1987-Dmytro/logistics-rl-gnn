@@ -146,7 +146,8 @@ def _q(cost, unserved=0, on_time=100.0):
 
 _FAKE_DUR = {"lat": {"rl": 689.0, "greedy": 7.0, "ortools": 2001.0},
              "cost": {"rl": 827.3, "greedy": 851.5, "ortools": 866.9},
-             "n_events": 25, "median_delta": -16.8, "violations": 0}
+             "n_events": 25, "median_delta": -16.8, "violations": 0,
+             "static_pol": {"greedy": 652.1575, "rl": 658.8688, "sample_k": 650.9141}}
 
 
 def _dash(*, before=578.7, greedy=508.0, system=495.9, uns_a=2):
@@ -187,6 +188,23 @@ def test_dashboard_sign_and_infinity_are_not_assumed():
     assert blocked["rows"][0]["cost"] == "∞ €"  # splitting a penalty out of ∞ invents a number
     assert "Inaction is impossible" in blocked["headline"] and "−∞" not in blocked["headline"]
     assert "vs greedy re-plan:" in blocked["headline"]
+
+
+def test_plan_gap_caption_is_durable_and_measured():
+    """The one-seed day-plan gap must be qualified by the aggregate: the band and the per-start
+    means are READ from the durable static means (dec-0009), and 'favorable' is measured — a seed
+    where the model is dearer must not read 'is favorable'."""
+    cap = demo._plan_gap_caption(_FAKE_DUR, seed=0, favorable=True)
+    assert "seed 0 is favorable to the model" in cap
+    assert "~650–659 €" in cap and "greedy 652.2 vs sample-K 650.9" in cap
+    assert "aggregate day-plan edge is ≈0" in cap and "dec-0009" in cap
+    # the numbers are not hand-typed: a different durable summary moves every one of them
+    moved = demo._plan_gap_caption(
+        {**_FAKE_DUR, "static_pol": {"greedy": 700.0, "rl": 712.0, "sample_k": 698.4}},
+        seed=0, favorable=True)
+    assert "~698–712 €" in moved and "greedy 700.0 vs sample-K 698.4" in moved
+    assert "seed 3 is not favorable to the model" in demo._plan_gap_caption(
+        _FAKE_DUR, seed=3, favorable=False)
 
 
 def test_continue_old_plan_numbering():

@@ -79,13 +79,16 @@ Trained:  2026-07-22 · 6b-step2-congestion-training · summary results/pomo_con
       • after re-plan (system): 495.9 € (Δ -82.8 €)   • on-time 100% · unserved 0
       This run's model contribution (portfolio WITHOUT RL candidates vs with them):
         • day plan: without the model 640.6 € · with it 587.9 € → -52.7 € (-8.2 %)
+          (seed 0 is favorable to the model; across seeds 0–9 polished starts converge to
+          ~650–659 € — greedy 652.2 vs sample-K 650.9, dec-0009 — so the aggregate day-plan
+          edge is ≈0, consistent with the negative verdict)
         • re-plan  : without the model 490.1 € · with it 495.9 € → +5.8 € (+1.2 %)
 ```
 
-<sub>Abridged from a real run (the tool also prints per-run wall-clock next to each durable median,
-the re-plan's own candidate table, and the artifact paths). **B's total jitters** with OR-Tools'
-GLS wall-clock (826.5–826.7 € across runs); the stable part is the **2 unserved stops → 400 €
-penalty** inside that total. The last block is the point of `--no-model`: on this event the model
+<sub>Abridged from a real run, long lines wrapped (the tool also prints per-run wall-clock next to
+each durable median, the re-plan's own candidate table, and the artifact paths). **B's total
+jitters** with OR-Tools' GLS wall-clock (826.5–826.7 € across runs); the stable part is the
+**2 unserved stops → 400 € penalty** inside that total. The last block is the point of `--no-model`: on this event the model
 costs **+5.8 €**, reproducing the durable Path-B verdict in a single run.</sub>
 
 Five self-describing artifacts land in `demo_out/` (git-ignored): **`1_morning_plan.html`** (static
