@@ -1,7 +1,7 @@
-"""OSMnx-пайплайн Аугсбурга: граф, скорости, аптеки, депо, снаппинг, матрицы.
+"""Augsburg OSMnx pipeline: graph, speeds, pharmacies, depot, snapping, matrices.
 
-Всё сетевое (download/geocode) — только здесь. snapshot.load_snapshot работает offline.
-API проверен на osmnx 2.1.0.
+Everything networked (download/geocode) lives here only. snapshot.load_snapshot works offline.
+The API is verified against osmnx 2.1.0.
 """
 
 from __future__ import annotations
@@ -15,15 +15,15 @@ from logistics_rl_gnn.config import data as cfg
 
 
 def load_drive_graph(place: str = cfg.PLACE) -> nx.MultiDiGraph:
-    """Drive-граф места, усечённый до наибольшей СИЛЬНО-связной компоненты (routable)."""
+    """Drive graph of the place, trimmed to the largest STRONGLY connected component (routable)."""
     g = ox.graph_from_place(place, network_type="drive")
     return ox.truncate.largest_component(g, strongly=True)
 
 
 def impute_speeds(g: nx.MultiDiGraph) -> tuple[nx.MultiDiGraph, float]:
-    """Проставить speed_kph/travel_time с немецким фолбэком.
+    """Set speed_kph/travel_time with the German fallback.
 
-    Возвращает (граф, % рёбер с РЕАЛЬНЫМ тегом maxspeed до импутации).
+    Returns (graph, % of edges with a REAL maxspeed tag before imputation).
     """
     total = tagged = 0
     for _, _, d in g.edges(data=True):
@@ -37,42 +37,42 @@ def impute_speeds(g: nx.MultiDiGraph) -> tuple[nx.MultiDiGraph, float]:
 
 
 def load_pharmacies(place: str = cfg.PLACE):
-    """GeoDataFrame аптек (amenity=pharmacy) в границах места.
+    """GeoDataFrame of pharmacies (amenity=pharmacy) within the place boundary.
 
-    Добавляет колонки x=lon, y=lat (репрезентативная точка на геометрию).
+    Adds columns x=lon, y=lat (representative point of the geometry).
     """
     gdf = ox.features_from_place(place, tags=cfg.PHARMACY_TAGS)
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty]
-    if "opening_hours" not in gdf.columns:  # колонка есть только если хоть одна аптека с тегом
+    if "opening_hours" not in gdf.columns:  # the column exists only if some pharmacy is tagged
         gdf = gdf.assign(opening_hours=pd.NA)
     pts = gdf.geometry.representative_point()
     return gdf.assign(x=pts.x.to_numpy(), y=pts.y.to_numpy())
 
 
 def geocode_depot(addr: str = cfg.DEPOT_ADDR) -> tuple[float, float]:
-    """(lat, lon) депо по адресу (Nominatim)."""
+    """(lat, lon) of the depot by address (Nominatim)."""
     return ox.geocode(addr)
 
 
 def snap_to_nodes(g, points, *, return_dist: bool = False):
-    """Ближайшие OSM-узлы к точкам points=[(lon, lat), ...] (X=lon, Y=lat)."""
+    """Nearest OSM nodes to points=[(lon, lat), ...] (X=lon, Y=lat)."""
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
     return ox.nearest_nodes(g, X=xs, Y=ys, return_dist=return_dist)
 
 
 def build_matrices(g, stop_nodes):
-    """All-pairs матрицы времени (travel_time, c) и дистанции (length, м) ПО СТОПАМ.
+    """All-pairs matrices of time (travel_time, s) and distance (length, m) PER STOP.
 
-    Индексация по СТОПАМ, не по уникальным узлам: stop_nodes может содержать
-    повторяющиеся OSM-узлы (аптеки, снапнутые в один узел) — такие со-узловые стопы
-    остаются ОТДЕЛЬНЫМИ строками с Δ≈0 между собой (src==tgt-узел → dijkstra=0).
-    Квадратные (k×k, k=len(stop_nodes)), диагональ 0. Требует routable-граф → значения конечны.
+    Indexed by STOP, not by unique node: stop_nodes may contain repeated OSM nodes (pharmacies
+    snapped onto the same node) — such co-located stops stay SEPARATE rows with Δ≈0 between
+    themselves (src==tgt node → dijkstra=0).
+    Square (k×k, k=len(stop_nodes)), diagonal 0. Requires a routable graph → values are finite.
     """
     k = len(stop_nodes)
     time_m = np.zeros((k, k), dtype=float)
     dist_m = np.zeros((k, k), dtype=float)
-    # single-source Dijkstra кэшируем по УНИКАЛЬНЫМ узлам (co-node стопы не пересчитываем)
+    # single-source Dijkstra is cached per UNIQUE node (co-located stops are not recomputed)
     t_cache: dict = {}
     d_cache: dict = {}
     for u in set(stop_nodes):

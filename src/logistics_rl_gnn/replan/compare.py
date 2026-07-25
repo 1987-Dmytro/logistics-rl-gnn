@@ -1,11 +1,11 @@
-"""Реакция на событие из ТЕКУЩЕГО частичного состояния: RL vs OR-Tools vs greedy.
+"""Reaction to an event from the CURRENT partial state: RL vs OR-Tools vs greedy.
 
-Мерим ДВЕ оси на ОДНОМ residual-инстансе:
-  • латентность re-plan (wall-time, end-to-end per method — build+solve, не только kernel);
-  • качество после re-plan (cost/on-time/unserved) единым evaluate_solution под congestion.
-RL — forward-pass (мс, no_grad), OR-Tools — re-solve на РЕАЛИСТИЧНОМ дедлайне (не 30с; при
-тесном бюджете качество OR-Tools падает к RL — там честный вопрос «RL≈OR при сравнимой цене»),
-greedy — контроль. Латентная гигиена: warmup (torch lazy-init) + медиана реплик.
+Two axes measured on ONE residual instance:
+  • re-plan latency (wall time, end-to-end per method — build+solve, not just the kernel);
+  • post-re-plan quality (cost/on-time/unserved) via the single evaluate_solution under congestion.
+RL is a forward pass (ms, no_grad), OR-Tools re-solves against a REALISTIC deadline (not 30s; on a
+tight budget OR-Tools quality drops towards RL — that is the honest question "is RL≈OR at a
+comparable price"), greedy is the control. Latency hygiene: warmup (torch lazy-init) + median.
 """
 
 from __future__ import annotations
@@ -23,25 +23,25 @@ from logistics_rl_gnn.config import instance as im
 from logistics_rl_gnn.env.events import make_dynamic_env
 from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution
 
-_BIG_S = 1e7  # сек: закрытое ребро в static-snapshot OR-Tools (недостижимо в Time-dim=14400с)
+_BIG_S = 1e7  # s: closed edge in the OR-Tools static snapshot (unreachable within Time-dim=14400s)
 _Q_KEYS = ("reward", "on_time_pct", "unserved", "vehicles_used", "distance_km", "time_min")
 
 
 def _snapshot_matrix_s(travel, n: int) -> np.ndarray:
-    """Static congestion-снапшот (сек) на момент старта тура (at=0): OR-Tools не видит
-    time-dependency → замораживаем c на час события. Закрытие → _BIG_S (арк недоступен)."""
+    """Static congestion snapshot (seconds) at the tour start (at=0): OR-Tools cannot see
+    time-dependency → c is frozen at the event hour. A closure → _BIG_S (arc unavailable)."""
     m = np.zeros((n, n))
     for i in range(n):
         for j in range(n):
             if i == j:
                 continue
-            t = travel.time(i, j, 0.0)  # мин; offset уже внутри travel
+            t = travel.time(i, j, 0.0)  # minutes; the offset already lives inside travel
             m[i, j] = _BIG_S if not np.isfinite(t) else t * 60.0
     return m
 
 
 def _bench(solve, *, reps: int, warmup: int):
-    """(routes последнего прогона, медианная латентность мс). warmup гасит torch lazy-init."""
+    """(routes of the last run, median latency in ms). warmup absorbs torch lazy-init."""
     for _ in range(warmup):
         solve()
     ts, routes = [], []
@@ -63,20 +63,21 @@ def compare_replan(
     warmup: int = 1,
     rl_planner=None,
 ) -> dict:
-    """Re-plan residual каждым методом → {method: {latency_ms, reward, on_time_pct, ...}}.
+    """Re-plan the residual with each method → {method: {latency_ms, reward, on_time_pct, ...}}.
 
-    rl_planner=None → метод «rl» = greedy-decode (одиночный forward, Phase 7). rl_planner задан
-    (Шаг 3) → «rl» = PortfolioPlanner.plan (sample-K ∪ RL-greedy ∪ greedy); латентность end-to-end
-    портфеля через тот же `_bench`. Гарантия rl ≤ greedy держится: greedy-кандидат в портфеле
-    строится идентично методу `greedy` тут (тот же instance+travel+fleet_size+scorer)."""
+    rl_planner=None → method "rl" = greedy decode (single forward, Phase 7). With rl_planner
+    (Step 3) → "rl" = PortfolioPlanner.plan (sample-K ∪ RL-greedy ∪ greedy); the portfolio's
+    end-to-end latency goes through the same `_bench`. The rl ≤ greedy guarantee holds: the
+    greedy candidate in the portfolio is built exactly as the `greedy` method here (same
+    instance+travel+fleet_size+scorer)."""
     cfg = CostConfig()
     n = len(residual.demand)
 
     def rl():
-        if rl_planner is not None:  # портфель (reps=1: медиану даёт внешний _bench)
+        if rl_planner is not None:  # portfolio (reps=1: the outer _bench takes the median)
             return rl_planner.plan(residual, travel, fleet_size=fleet_size)["routes"]
         env = make_dynamic_env(residual, travel=travel, fleet_size=fleet_size)
-        with torch.no_grad():  # инференс: без autograd-графа (честная латентность)
+        with torch.no_grad():  # inference: no autograd graph (honest latency)
             return policy.rollout(env, mode="greedy")[0]
 
     def gd():
@@ -84,7 +85,7 @@ def compare_replan(
         return greedy_routes(env=env)
 
     snap = replace(residual, time_matrix=_snapshot_matrix_s(travel, n))
-    _, cap = im.fleet_of(residual)  # Q сценария (K приходит параметром) — иначе def-time дефолт
+    _, cap = im.fleet_of(residual)  # scenario Q (K is a parameter) — else the def-time default
 
     def ort():
         return ortools_routes(snap, fleet_size=fleet_size, vehicle_cap=cap,
@@ -94,9 +95,9 @@ def compare_replan(
     for name, fn, reps, wu in [
         ("rl", rl, rl_reps, warmup),
         ("greedy", gd, rl_reps, warmup),
-        ("ortools", ort, 1, 0),  # OR-Tools крутит GLS до дедлайна → 1 реплика
+        ("ortools", ort, 1, 0),  # OR-Tools runs GLS until the deadline → 1 replica
     ]:
         routes, ms = _bench(fn, reps=reps, warmup=wu)
-        q = evaluate_solution(routes, residual, cfg, travel=travel)  # качество под congestion
+        q = evaluate_solution(routes, residual, cfg, travel=travel)  # quality under congestion
         out[name] = {"latency_ms": ms, **{k: q[k] for k in _Q_KEYS}}
     return out

@@ -1,5 +1,5 @@
-"""Phase 7 dynamic-тесты. Паритет с FreeFlow + env_checker + логика событий — всегда;
-re-plan/латентность (главный гейт) — на снапшоте (skip без него) + torch/ortools.
+"""Phase 7 dynamic tests. Parity with FreeFlow + env_checker + event logic — always;
+re-plan/latency (the main gate) — on the snapshot (skipped without it) + torch/ortools.
 """
 
 from __future__ import annotations
@@ -47,11 +47,11 @@ def _tiny_instance(seed=0):
     )
 
 
-# ---------- паритет + env_checker (без снапшота) ----------
+# ---------- parity + env_checker (no snapshot) ----------
 
 
 def test_congestion_parity_with_freeflow():
-    # c≡1 (flat_c) И нет активных инцидентов ⇒ ровно FreeFlow на любом at_minute
+    # c≡1 (flat_c) AND no active incidents ⇒ exactly FreeFlow at any at_minute
     inst = _tiny_instance()
     t0 = np.asarray(inst.time_matrix) / 60.0
     ff = FreeFlowTravel(t0)
@@ -63,12 +63,12 @@ def test_congestion_parity_with_freeflow():
 
 
 def test_congestion_drop_in_survives_reset():
-    # env НЕ переписан: CongestionTravel живёт в env.travel после reset (rollout/greedy сбрасывают)
+    # the env is NOT rewritten: CongestionTravel survives reset in env.travel (rollout/greedy reset)
     inst = _tiny_instance()
     ct = congestion_for(inst, dow=1)
     env = make_dynamic_env(inst, travel=ct, fleet_size=1, t_max_min=1000.0)
     env.reset(seed=0)
-    assert env.travel is ct  # не откатился к FreeFlow
+    assert env.travel is ct  # did not fall back to FreeFlow
 
 
 def test_env_checker_congestion():
@@ -79,40 +79,40 @@ def test_env_checker_congestion():
 
 def test_traffic_incident_raises_in_zone_only():
     inst = _tiny_instance()
-    inc = Incident(tuple(inst.coords[1]), cg.INCIDENT_RADIUS_KM, 1.0, 40.0, 40.0)  # зона узла 1
-    ct_no = congestion_for(inst, dow=1)  # только диурнал
-    ct = congestion_for(inst, dow=1, incidents=[inc])  # диурнал + инцидент
-    # в один момент (at=50, в окне инцидента): в зоне (ребро 0→1) инцидент поднимает время,
-    # вне зоны (ребро 0→2) — совпадает с чистым диурналом (инцидент геометрически локален)
+    inc = Incident(tuple(inst.coords[1]), cg.INCIDENT_RADIUS_KM, 1.0, 40.0, 40.0)  # zone of node 1
+    ct_no = congestion_for(inst, dow=1)  # diurnal only
+    ct = congestion_for(inst, dow=1, incidents=[inc])  # diurnal + incident
+    # at one moment (at=50, inside the incident window): inside the zone (edge 0→1) time rises,
+    # outside it (edge 0→2) it matches the pure diurnal (the incident is geometrically local)
     assert ct.time(0, 1, 50.0) > ct_no.time(0, 1, 50.0)
     assert ct.time(0, 2, 50.0) == pytest.approx(ct_no.time(0, 2, 50.0))
-    # вне окна инцидента (at=200) даже в зоне — снова только диурнал
+    # outside the incident window (at=200) even inside the zone — the diurnal again
     assert ct.time(0, 1, 200.0) == pytest.approx(ct_no.time(0, 1, 200.0))
 
 
 def test_edge_closure_removes_edge():
     inst = _tiny_instance()
-    inc = Incident(tuple(inst.coords[1]), cg.INCIDENT_RADIUS_KM, math.inf, 40.0, 40.0)  # закрытие
+    inc = Incident(tuple(inst.coords[1]), cg.INCIDENT_RADIUS_KM, math.inf, 40.0, 40.0)  # closure
     ct = congestion_for(inst, dow=1, incidents=[inc])
-    assert math.isinf(ct.time(0, 1, 50.0))  # закрыто в окне
-    assert math.isfinite(ct.time(0, 1, 200.0))  # снова открыто вне окна
+    assert math.isinf(ct.time(0, 1, 50.0))  # closed inside the window
+    assert math.isfinite(ct.time(0, 1, 200.0))  # open again outside the window
 
 
 def test_breakdown_reduces_fleet():
     st = DynamicState(_tiny_instance(), dow=1)
     assert st.fleet(8) == 8
-    assert BreakdownEvent(30.0).apply(st) is True  # триггер
+    assert BreakdownEvent(30.0).apply(st) is True  # trigger
     assert st.broken == 1 and st.fleet(8) == 7
 
 
 def test_urgent_adds_node_with_tight_window():
     inst = _tiny_instance()
     st = DynamicState(inst, dow=1)
-    st.served = {1, 2}  # обе обслужены
+    st.served = {1, 2}  # both served
     ev = UrgentEvent(30.0, {"idx": 1, "demand": 7, "delta_s": 1800.0})
     assert ev.apply(st) is True
     res = residual_instance(st)
-    # срочный узел 1 включён (несмотря на served), окно узкое [0, 1800]сек
+    # the urgent node 1 is included (despite served), the window is narrow [0, 1800] s
     assert inst.snapshot_stops[1] in res.snapshot_stops
     k = res.snapshot_stops.index(inst.snapshot_stops[1])
     assert res.windows[k, 0] == pytest.approx(0.0)
@@ -122,16 +122,16 @@ def test_urgent_adds_node_with_tight_window():
 
 def test_diurnal_tick_does_not_trigger():
     st = DynamicState(_tiny_instance(), dow=1)
-    assert DiurnalTick(120.0).apply(st) is False  # плавный c(h) — НЕ re-plan
+    assert DiurnalTick(120.0).apply(st) is False  # the smooth c(h) — NOT a re-plan
 
 
-# ---------- re-plan / латентность (снапшот + torch/ortools) ----------
+# ---------- re-plan / latency (snapshot + torch/ortools) ----------
 
-_NEED_SNAP = pytest.mark.skipif(im._latest_snapshot_dir() is None, reason="нет снапшота")
+_NEED_SNAP = pytest.mark.skipif(im._latest_snapshot_dir() is None, reason="no snapshot")
 
 
 def _snapshot_residual(now_min=40.0, incident=True, broken=0):
-    """Реальный residual в момент now_min: частичное состояние из greedy-плана + опц. инцидент."""
+    """A real residual at now_min: partial state from the greedy plan + an optional incident."""
     from logistics_rl_gnn.baselines.greedy import greedy_routes
 
     inst = im.generate_instance(seed=0)
@@ -161,11 +161,11 @@ def test_replan_feasible_under_events():
 
     torch.manual_seed(0)
     res, travel, st, _ = _snapshot_residual(now_min=40.0, incident=True, broken=1)
-    assert len(res.demand) - 1 > 5, "residual должен быть содержательным на раннем событии"
+    assert len(res.demand) - 1 > 5, "the residual must be substantial at an early event"
     out = compare_replan(res, travel, VRPPolicy(), fleet_size=st.fleet(8), deadline_s=1)
-    # env-маскинг (cap/TW/T_max под congestion) → RL и greedy без опозданий; возврат ≤ T_max
+    # env masking (cap/TW/T_max under congestion) → RL and greedy without lateness; return ≤ T_max
     for m in ("rl", "greedy"):
-        assert out[m]["on_time_pct"] == pytest.approx(100.0), f"{m}: опоздания под событием"
+        assert out[m]["on_time_pct"] == pytest.approx(100.0), f"{m}: lateness under the event"
         assert out[m]["unserved"] >= 0
 
 
@@ -183,6 +183,6 @@ def test_main_gate_rl_latency_orders_below_ortools():
     res, travel, st, _ = _snapshot_residual(now_min=40.0, incident=True, broken=0)
     out = compare_replan(res, travel, VRPPolicy(), fleet_size=st.fleet(8), deadline_s=1)
     rl_ms, ort_ms = out["rl"]["latency_ms"], out["ortools"]["latency_ms"]
-    # ГЛАВНЫЙ ГЕЙТ: RL реагирует на порядки быстрее OR-Tools + абсолютный потолок (не тавтология)
-    assert ort_ms / rl_ms > 20.0, f"RL не на порядки быстрее: RL={rl_ms:.1f}мс OR={ort_ms:.1f}мс"
-    assert rl_ms < 100.0, f"RL-латентность {rl_ms:.1f}мс — реакция должна быть суб-100мс"
+    # MAIN GATE: RL reacts orders of magnitude faster than OR-Tools + an absolute ceiling
+    assert ort_ms / rl_ms > 20.0, f"RL not orders faster: RL={rl_ms:.1f}ms OR={ort_ms:.1f}ms"
+    assert rl_ms < 100.0, f"RL latency {rl_ms:.1f}ms — the reaction must be sub-100ms"

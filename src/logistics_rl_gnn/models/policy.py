@@ -1,5 +1,5 @@
-"""VRPPolicy — связка энкодер+декодер с VRPEnv (Phase 5). БЕЗ train-loop (это Phase 6):
-только forward + rollout. Феасибилити — из env.action_mask (single source of truth).
+"""VRPPolicy — wires encoder+decoder to VRPEnv (Phase 5). NO train loop (that is Phase 6):
+forward + rollout only. Feasibility comes from env.action_mask (single source of truth).
 """
 
 from __future__ import annotations
@@ -12,26 +12,26 @@ from logistics_rl_gnn.env.travel import time_context
 from logistics_rl_gnn.models.decoder import AttentionDecoder
 from logistics_rl_gnn.models.encoder import GATEncoder
 
-_MULT_CAP = 10.0  # потолок congestion-множителя (закрытие → «≈блокировано», а не inf)
+_MULT_CAP = 10.0  # cap on the congestion multiplier (a closure → "≈blocked", not inf)
 
 
 def build_graph(env, device):
-    """Статический нормализованный граф инстанса из env-данных (single source).
+    """Static normalised instance graph from env data (single source).
 
-    Узлы (8): [x, y, demand/Q, e/H, l/H, service/T_max, is_depot, node_congestion].
-    Рёбра (edge_attr [E,2]): [0] travel_time(i,j,cur_time) АКТИВНОЙ модели, per-instance
-    max-норма (топология; под free-flow == прежнее значение); [1] congestion_multiplier =
-    travel/free_flow = c·(1+ΣI) — под free-flow ≡1, но делает диурнал/инцидент видимыми
-    ПО-РЁБЕРНО (закрывает нюанс 0005: max-норма стирала равномерный диурнал в канале 0).
-    -> (node_feat [k,8], edge_index [2,E], edge_attr [E,2]) на device.
+    Nodes (8): [x, y, demand/Q, e/H, l/H, service/T_max, is_depot, node_congestion].
+    Edges (edge_attr [E,2]): [0] travel_time(i,j,cur_time) of the ACTIVE model, per-instance
+    max-normalised (topology; under free-flow == the previous value); [1] congestion_multiplier =
+    travel/free_flow = c·(1+ΣI) — ≡1 under free-flow, yet it makes the diurnal/incident visible
+    PER EDGE (closes the 0005 subtlety: max-norm erased a uniform diurnal in channel 0).
+    -> (node_feat [k,8], edge_index [2,E], edge_attr [E,2]) on device.
     """
     k = env.k
     coord = torch.as_tensor(env.coords, dtype=torch.float32)  # [k, 2] (lon, lat)
     cmin, cmax = coord.amin(0), coord.amax(0)
     coord = (coord - cmin) / (cmax - cmin + 1e-8)  # per-instance min-max → [0,1]
-    horizon = env._inst.horizon_s / 60.0  # мин
-    win = torch.as_tensor(env.win, dtype=torch.float32)  # [k, 2] мин
-    nc = torch.as_tensor(  # уровень congestion у узла (0 под free-flow → паритет)
+    horizon = env._inst.horizon_s / 60.0  # minutes
+    win = torch.as_tensor(env.win, dtype=torch.float32)  # [k, 2] minutes
+    nc = torch.as_tensor(  # congestion level at the node (0 under free-flow → parity)
         env.travel.node_congestion(env.coords, env.cur_time), dtype=torch.float32
     )
     node_feat = torch.stack(
@@ -42,24 +42,24 @@ def build_graph(env, device):
             win[:, 0] / horizon,
             win[:, 1] / horizon,
             torch.as_tensor(env.service_min, dtype=torch.float32) / env.t_max_min,
-            torch.tensor([1.0] + [0.0] * (k - 1)),  # is_depot (узел 0 = депо)
+            torch.tensor([1.0] + [0.0] * (k - 1)),  # is_depot (node 0 = depot)
             nc,
         ],
         dim=1,
     )
-    # congestion-aware travel-матрица (снимок в cur_time); под FreeFlow == env.time_m (паритет).
-    # travel.matrix() — векторно (k² вызовов time() душили POMO-ретрейн при k=62); паритет в тестах.
-    ff = torch.as_tensor(env.time_m, dtype=torch.float32)  # free-flow t0 [k,k] мин
+    # congestion-aware travel matrix (snapshot at cur_time); under FreeFlow == env.time_m (parity).
+    # travel.matrix() is vectorised (k² time() calls choked POMO retrain at k=62); parity tested.
+    ff = torch.as_tensor(env.time_m, dtype=torch.float32)  # free-flow t0 [k,k] minutes
     tm = torch.as_tensor(env.travel.matrix(env.cur_time), dtype=torch.float32)
-    # канал 1: множитель travel/ff (≡1 под free-flow). diag ff=0 → 1; закрытие (inf) → cap.
+    # channel 1: multiplier travel/ff (≡1 under free-flow). diag ff=0 → 1; closure (inf) → cap.
     mult = torch.where(ff > 0, tm / ff.clamp_min(1e-8), torch.ones_like(ff))
     mult = torch.where(torch.isinf(mult), torch.full_like(mult, _MULT_CAP), mult)
     mult = mult.clamp_max(_MULT_CAP)
-    if torch.isinf(tm).any():  # канал 0: закрытие → крупный конечный «очень медленно» (без NaN)
+    if torch.isinf(tm).any():  # channel 0: closure → a large finite "very slow" (no NaN)
         tm = torch.where(torch.isinf(tm), tm[torch.isfinite(tm)].max() * 3.0, tm)
     idx = torch.arange(k)
-    edge_index = torch.stack([idx.repeat_interleave(k), idx.repeat(k)])  # полный граф [2, k*k]
-    ea0 = tm.reshape(-1, 1) / (tm.max() + 1e-8)  # travel_time норм. (топология)
+    edge_index = torch.stack([idx.repeat_interleave(k), idx.repeat(k)])  # complete graph [2, k*k]
+    ea0 = tm.reshape(-1, 1) / (tm.max() + 1e-8)  # travel_time normalised (topology)
     edge_attr = torch.cat([ea0, mult.reshape(-1, 1)], dim=1)  # [k*k, 2]
     return node_feat.to(device), edge_index.to(device), edge_attr.to(device)
 
@@ -75,42 +75,42 @@ class VRPPolicy(nn.Module):
         return next(self.parameters()).device
 
     def encode(self, env):
-        """Один прогон энкодера на инстанс → (node_embs, graph_emb, precomp декодера)."""
+        """One encoder pass per instance → (node_embs, graph_emb, decoder precomp)."""
         node_feat, ei, ea = build_graph(env, self.device)
         node_embs, graph_emb = self.encoder(node_feat, ei, ea)
         return node_embs, graph_emb, self.decoder.precompute(node_embs)
 
     def _context(self, env, enc) -> torch.Tensor:
-        """Вектор контекста π(·|s): [graph_emb, emb(pos), dyn(2), tctx(4)].
-        Общий для одиночного (train) и батчевого (sample_k) путей — одна раскладка, без дублей."""
+        """Context vector of π(·|s): [graph_emb, emb(pos), dyn(2), tctx(4)].
+        Shared by the single (train) and batched (sample_k) paths — one layout, no duplicates."""
         node_embs, graph_emb, _ = enc
         horizon = env._inst.horizon_s / 60.0
         dyn = torch.tensor(
             [env.rem_cap / env.Q, env.cur_time / horizon], dtype=torch.float32, device=self.device
         )
-        tctx = torch.as_tensor(  # time-context (congestion-фаза): под free-flow — постоянный вход
+        tctx = torch.as_tensor(  # time-context (congestion phase): under free-flow a constant input
             time_context(env.abs_minute, env.dow), dtype=torch.float32, device=self.device
         )
         return torch.cat([graph_emb, node_embs[env.pos], dyn, tctx])
 
     def action_dist(self, env, obs, enc) -> torch.distributions.Categorical:
-        """Распределение π(a|s) в текущем состоянии env. enc = (node_embs, graph_emb, precomp)."""
+        """Distribution π(a|s) in the current env state. enc = (node_embs, graph_emb, precomp)."""
         mask = torch.as_tensor(obs["action_mask"], dtype=torch.float32, device=self.device)
         return self.decoder.dist(self._context(env, enc), enc[2], mask)
 
     def sample_k(self, envs, enc, *, temperature: float = 1.0, seed: int = 0) -> list:
-        """K стохастических роллаутов из ОБЩЕГО enc, decode БАТЧЕВО по K (один forward на шаг).
+        """K stochastic rollouts from a SHARED enc, decoding BATCHED over K (one forward per step).
 
-        envs — K свежих копий ОДНОГО (фикс.) инстанса → общий статический граф → общий enc;
-        сбрасываются здесь (дивергенция только от сэмплинга). Форс-старты НЕ навязываем — чистый
-        temperature-сэмплинг с шага 0 (POMO multistart-greedy = отдельный кандидат портфеля).
-        Мутируем ТОЛЬКО env-копии; seed → детерминизм (свой генератор, глобальный RNG не трогаем).
-        -> list[routes] длины K.
+        envs — K fresh copies of ONE (fixed) instance → shared static graph → shared enc; they are
+        reset here (divergence comes from sampling only). No forced starts — pure temperature
+        sampling from step 0 (POMO multistart-greedy is a separate portfolio candidate).
+        Only the env copies are mutated; seed → determinism (own generator, global RNG untouched).
+        -> list[routes] of length K.
         """
-        assert temperature > 0, "temperature > 0 (greedy — отдельная стратегия)"
+        assert temperature > 0, "temperature > 0 (greedy is a separate strategy)"
         dev = self.device
         gen = torch.Generator(device=dev).manual_seed(int(seed))
-        obs = [e.reset(seed=0)[0] for e in envs]  # фикс. инстанс (make_dynamic_env игнорит seed)
+        obs = [e.reset(seed=0)[0] for e in envs]  # fixed instance (make_dynamic_env ignores seed)
         routes: list = [None] * len(envs)
         active = list(range(len(envs)))
         precomp = enc[2]
@@ -137,10 +137,10 @@ class VRPPolicy(nn.Module):
         return routes
 
     def rollout(self, env, mode: str = "sample", seed=None, return_entropy: bool = False):
-        """Автогрегрессивный эпизод. -> (routes, sum_logπ [grad], metrics[, mean_entropy]).
+        """Autoregressive episode. -> (routes, sum_logπ [grad], metrics[, mean_entropy]).
 
-        return_entropy=True добавляет 4-м элементом среднюю по шагам энтропию π — ТЕНЗОР с
-        градиентом (страж коллапса + опц. entropy-бонус в loss).
+        return_entropy=True appends the step-mean entropy of π as a 4th element — a TENSOR with
+        gradient (collapse guard + optional entropy bonus in the loss).
         """
         obs, info = env.reset(seed=seed)
         enc = self.encode(env)
@@ -150,13 +150,13 @@ class VRPPolicy(nn.Module):
             dist = self.action_dist(env, obs, enc)
             a = dist.probs.argmax() if mode == "greedy" else dist.sample()
             logps.append(dist.log_prob(a))
-            if return_entropy:  # ручная энтропия (маскед p=0 → 0·log ≈ 0, без NaN от −inf логитов)
+            if return_entropy:  # manual entropy (masked p=0 → 0·log ≈ 0, no NaN from −inf logits)
                 p = dist.probs
                 ents.append(-(p * (p + 1e-12).log()).sum())
             obs, _, term, trunc, info = env.step(int(a.item()))
             done = term or trunc
         sum_logp = torch.stack(logps).sum() if logps else torch.zeros((), device=self.device)
-        metrics = evaluate_solution(info["routes"], env._inst, env._cost_cfg)  # cfg среды
+        metrics = evaluate_solution(info["routes"], env._inst, env._cost_cfg)  # env cfg
         if return_entropy:
             mean_ent = torch.stack(ents).mean() if ents else torch.zeros((), device=self.device)
             return info["routes"], sum_logp, metrics, mean_ent

@@ -1,4 +1,4 @@
-"""Сохранение/загрузка снапшота Аугсбурга. load_snapshot — offline (без сети)."""
+"""Saving/loading the Augsburg snapshot. load_snapshot is offline (no network)."""
 
 from __future__ import annotations
 
@@ -14,26 +14,26 @@ import pandas as pd
 
 @dataclass
 class Snapshot:
-    """Загруженный снапшот. graph=None, если with_graph=False."""
+    """A loaded snapshot. graph=None when with_graph=False."""
 
     meta: dict
-    node_ids: list[int]  # OSM node id ПО СТОПАМ (по порядку stop; может повторяться у со-узловых)
+    node_ids: list[int]  # OSM node id PER STOP (in stop order; may repeat for co-located stops)
     time_matrix: np.ndarray
     dist_matrix: np.ndarray
-    nodes: pd.DataFrame  # колонки: stop, kind (depot|pharmacy), node_id, x, y
+    nodes: pd.DataFrame  # columns: stop, kind (depot|pharmacy), node_id, x, y
     graph: nx.MultiDiGraph | None
 
 
 def save_snapshot(out_dir, g, stop_nodes, time_matrix, dist_matrix, nodes_df, meta) -> Path:
-    """graphml + матрицы (parquet) + узлы (parquet) + meta.json.
+    """graphml + matrices (parquet) + nodes (parquet) + meta.json.
 
-    Матрицы метятся стоп-ПОЗИЦИЯМИ (0..k-1), а не node-id: node-id со-узловых стопов
-    повторяются и не годятся в уникальные имена колонок. stop→node_id хранится в nodes_df.
+    Matrices are labelled by stop POSITION (0..k-1) rather than node id: node ids of co-located
+    stops repeat and cannot serve as unique column names. stop→node_id lives in nodes_df.
     """
     d = Path(out_dir)
     d.mkdir(parents=True, exist_ok=True)
     ox.save_graphml(g, d / "graph.graphml")
-    cols = [str(i) for i in range(len(stop_nodes))]  # стоп-позиции (уникальны)
+    cols = [str(i) for i in range(len(stop_nodes))]  # stop positions (unique)
     pd.DataFrame(time_matrix, index=cols, columns=cols).to_parquet(d / "time_matrix.parquet")
     pd.DataFrame(dist_matrix, index=cols, columns=cols).to_parquet(d / "dist_matrix.parquet")
     nodes_df.to_parquet(d / "nodes.parquet")
@@ -44,12 +44,12 @@ def save_snapshot(out_dir, g, stop_nodes, time_matrix, dist_matrix, nodes_df, me
 
 
 def load_snapshot(in_dir, *, with_graph: bool = True) -> Snapshot:
-    """Читает снапшот обратно БЕЗ сети."""
+    """Reads the snapshot back WITHOUT network access."""
     d = Path(in_dir)
     meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
     tdf = pd.read_parquet(d / "time_matrix.parquet")
     ddf = pd.read_parquet(d / "dist_matrix.parquet")
     nodes = pd.read_parquet(d / "nodes.parquet").sort_values("stop").reset_index(drop=True)
-    node_ids = [int(n) for n in nodes["node_id"]]  # per-stop node id (в порядке stop)
+    node_ids = [int(n) for n in nodes["node_id"]]  # per-stop node id (in stop order)
     graph = ox.load_graphml(d / "graph.graphml") if with_graph else None
     return Snapshot(meta, node_ids, tdf.to_numpy(), ddf.to_numpy(), nodes, graph)

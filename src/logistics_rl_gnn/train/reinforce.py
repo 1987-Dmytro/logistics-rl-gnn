@@ -1,11 +1,12 @@
-"""REINFORCE с rollout-baseline (Kool, Phase 6).
+"""REINFORCE with a rollout baseline (Kool, Phase 6).
 
-baseline = замороженная копия политики (greedy на ТЕХ ЖЕ инстансах). advantage = стоимость
-sample-текущей − greedy-baseline (paired), НОРМИРУЕТСЯ (mean0/std1) — иначе гигантский масштаб
-(all-depot baseline) вгонял softmax в насыщение за 1 эпоху (Phase 6 diag). loss = mean(adv · Σlogπ)
-— знак +Σlogπ (∇L=E[(cost−b)∇Σlogπ]=∇E[cost], спуск ↓cost; спек-формула −Σlogπ дала бы ↑cost).
-Каждую эпоху paired t-test greedy-current vs greedy-baseline на val → значимо лучше ⇒ апдейт.
-Runtime-страж: grad_norm≈0 несколько эпох подряд (насыщение) → обрыв прогона (не 100 эпох впустую).
+baseline = a frozen copy of the policy (greedy on the SAME instances). advantage = cost of the
+current sample − greedy baseline (paired), NORMALISED (mean0/std1) — otherwise the enormous scale
+(all-depot baseline) drove softmax into saturation within 1 epoch (Phase 6 diag).
+loss = mean(adv · Σlogπ) — the sign is +Σlogπ (∇L=E[(cost−b)∇Σlogπ]=∇E[cost], descent ↓cost; the
+spec formula −Σlogπ would give ↑cost). Every epoch a paired t-test of greedy-current vs
+greedy-baseline on val → significantly better ⇒ update. Runtime guard: grad_norm≈0 for several
+epochs in a row (saturation) → abort the run (rather than 100 wasted epochs).
 """
 
 from __future__ import annotations
@@ -22,11 +23,11 @@ from logistics_rl_gnn.env.scoring import evaluate_solution
 from logistics_rl_gnn.env.vrp_env import VRPEnv
 from logistics_rl_gnn.train.instance_sampler import InstanceSampler
 
-_FREEZE_PATIENCE = 3  # эпох подряд с grad_norm≈0 → обрыв прогона (страж коллапса)
+_FREEZE_PATIENCE = 3  # epochs in a row with grad_norm≈0 → abort the run (collapse guard)
 
 
 def make_env(instance) -> VRPEnv:
-    """VRPEnv на фиксированном инстансе (instance_fn игнорит seed → reset даёт тот же инстанс)."""
+    """VRPEnv on a fixed instance (instance_fn ignores seed → reset yields the same instance)."""
     return VRPEnv(instance_fn=lambda s: instance)
 
 
@@ -36,7 +37,7 @@ def _greedy_cost(policy, env) -> float:
 
 
 def _heuristic_greedy_cost(env) -> float:
-    """Стоимость эвристики nearest-feasible (Phase 4) на инстансе env — референс gap."""
+    """Cost of the nearest-feasible heuristic (Phase 4) on the env instance — the gap reference."""
     routes = greedy_routes(env=env)
     return -evaluate_solution(routes, env._inst, env._cost_cfg)["reward"]
 
@@ -50,19 +51,19 @@ class Trainer:
         self.val_envs = [make_env(self.sampler.sample(s)) for s in cfg.val_seeds()]
         self.val_heur = float(
             np.mean([_heuristic_greedy_cost(e) for e in self.val_envs])
-        )  # фикс. референс
+        )  # fixed reference
 
     @staticmethod
     def _frozen_copy(policy):
         b = copy.deepcopy(policy).eval()
         for p in b.parameters():
-            p.requires_grad_(False)  # baseline не должен отслеживать обучение
+            p.requires_grad_(False)  # the baseline must not track training
         return b
 
     def train_batch(self, seeds) -> dict:
         envs = [make_env(self.sampler.sample(int(s))) for s in seeds]
         costs, logps, ents = [], [], []
-        for env in envs:  # sample-текущая политика (с градиентом)
+        for env in envs:  # the current sampling policy (with gradient)
             _, slp, m, ent = self.policy.rollout(env, mode="sample", return_entropy=True)
             costs.append(-m["reward"])
             logps.append(slp)
@@ -71,10 +72,10 @@ class Trainer:
             [_greedy_cost(self.baseline, e) for e in envs]
         )  # baseline greedy (paired)
         adv = torch.tensor(costs) - bl  # cost_sample − cost_baseline
-        adv = ((adv - adv.mean()) / (adv.std() + 1e-8)).detach()  # нормализация: ограничить ‖grad‖
+        adv = ((adv - adv.mean()) / (adv.std() + 1e-8)).detach()  # normalise: bound ‖grad‖
         mean_ent = torch.stack(ents).mean()
-        loss = (adv * torch.stack(logps)).mean()  # +Σlogπ → спуск ↓cost
-        if self.cfg.entropy_beta:  # резерв: −β·H макс. энтропию (против переострения softmax)
+        loss = (adv * torch.stack(logps)).mean()  # +Σlogπ → descent ↓cost
+        if self.cfg.entropy_beta:  # reserve: −β·H maximises entropy (against softmax sharpening)
             loss = loss - self.cfg.entropy_beta * mean_ent
         self.opt.zero_grad()
         loss.backward()
@@ -89,7 +90,7 @@ class Trainer:
     def _maybe_update_baseline(self) -> dict:
         cur = np.array([_greedy_cost(self.policy, e) for e in self.val_envs])
         base = np.array([_greedy_cost(self.baseline, e) for e in self.val_envs])
-        _, p = ttest_rel(cur, base)  # двусторонний → делим p/2 для one-sided «лучше»
+        _, p = ttest_rel(cur, base)  # two-sided → use p/2 for the one-sided "better"
         updated = bool(
             cur.mean() < base.mean() and np.isfinite(p) and (p / 2) < self.cfg.baseline_p
         )
@@ -127,11 +128,11 @@ class Trainer:
                     torch.save(self.policy.state_dict(), self.cfg.ckpt)
             if log_fn:
                 log_fn(rec)
-            # runtime-страж коллапса: |g|≈0 = насыщение (Phase 6). Обрыв на epoch ~3, НЕ 100.
+            # runtime collapse guard: |g|≈0 = saturation (Phase 6). Abort at epoch ~3, NOT 100.
             frozen = frozen + 1 if rec["grad_norm"] < 1e-6 else 0
             if frozen >= _FREEZE_PATIENCE:
                 raise RuntimeError(
-                    f"обучение заморожено: grad_norm≈0 {frozen} эпох подряд (насыщение/коллапс) "
-                    f"— прогон прерван на epoch {epoch} (не {self.cfg.epochs})"
+                    f"training frozen: grad_norm≈0 for {frozen} epochs (saturation/collapse) "
+                    f"— aborted at epoch {epoch} (not {self.cfg.epochs})"
                 )
         return history

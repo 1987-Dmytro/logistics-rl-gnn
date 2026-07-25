@@ -1,6 +1,6 @@
-# Понедельник, весь город, полный флот — и ДВА traffic-инцидента подряд в утренний пик.
-# c(dow,h) в понедельник совпадает с вторником (dow-фактор буден = 1.0) — разница с дефолтным
-# прогоном идёт РОВНО от двух инцидентов, не от дня недели.
+# Monday, the whole city, full fleet — and TWO traffic incidents in a row during the morning peak.
+# c(dow,h) on Monday equals Tuesday (the weekday factor is 1.0) — the difference from the default
+# run comes EXACTLY from the two incidents, not from the day of the week.
 name: monday_rush
 weekday: monday
 pharmacies: all

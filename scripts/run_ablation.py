@@ -1,24 +1,24 @@
-"""Phase 6b Ablation — латентная ниша RL. БЕЗ обучения.
+"""Phase 6b Ablation — the latency niche of RL. NO training.
 
-Отвечает на открытый вопрос [[0009]]: есть ли режим, где СТАРТОВАЯ точка RL решает — т.е. где
-polish НЕ успевает выровнять старты под жёстким realtime-бюджетом (0009 выровнял старты лишь у
-СХОДИМОСТИ, ~16с на n=62; здесь все бюджеты ≤ 500мс — заведомо ДО сходимости).
+Answers the open question of [[0009]]: is there a regime where the RL STARTING point decides — i.e.
+where polish cannot level the starts out under a hard realtime budget (0009 levelled the starts only
+at CONVERGENCE, ~16s at n=62; here every budget is ≤ 500ms — deliberately BEFORE convergence).
 
-Тот же 0004-харнесс (`run_dynamic.iter_events`: 5 сидов × 6 событий, идентичная provenance). Для
-КАЖДОГО сработавшего события — системы под жёстким END-TO-END бюджетом budget_ms ∈ {50,100,200,500}:
-  • rl_raw        — greedy-decode политики (без polish, без портфеля): «мгновенный» RL-старт;
-  • greedy_raw    — эвристика greedy без polish: контроль СТАРТА (изолирует старт от polish);
-  • greedy_polish — greedy + polish в ОСТАТОК бюджета;
-  • rl_polish     — RL greedy-decode + polish в ОСТАТОК бюджета.
-Бюджет end-to-end (decode+polish); превышение = берём что есть на дедлайне (polish уже anytime по
-budget_ms). Единый скорер `evaluate_solution` под тем же travel (запрет №3). Парные сравнения по
-событиям (median Δ, wins), как в 0007. rl_raw/greedy_raw budget-независимы → считаем 1 раз/событие.
+The same 0004 harness (`run_dynamic.iter_events`: 5 seeds × 6 events, identical provenance). For
+EVERY triggered event — systems under a hard END-TO-END budget budget_ms ∈ {50,100,200,500}:
+  • rl_raw        — greedy decode of the policy (no polish, no portfolio): the "instant" RL start;
+  • greedy_raw    — the greedy heuristic without polish: the START control (isolates start/polish);
+  • greedy_polish — greedy + polish in the REMAINING budget;
+  • rl_polish     — RL greedy decode + polish in the REMAINING budget.
+The budget is end-to-end (decode+polish); on overrun we take what exists at the deadline (polish is
+already anytime by budget_ms). One scorer `evaluate_solution` under the same travel (#3). Paired
+comparisons over events (median Δ, wins), as in 0007. rl_raw/greedy_raw: computed 1× per event.
 
-ВНИМАНИЕ (запрет №4): cost *_polish систем budget-bound → wall-clock-dependent (сколько улучшающих
-ходов влезло до дедлайна = как быстро железо; тот же seed → другой маршрут). Детерминированы только
-raw-старты (decode/greedy). Числа привязаны к config+версиям+hash чекпойнта, НЕ к абсолюту.
+WARNING (prohibition #4): the cost of the *_polish systems is budget-bound → wall-clock-dependent
+(how many improving moves fit before the deadline = how fast the hardware; the same seed → another
+route). Only the raw starts (decode/greedy) are deterministic. Numbers are tied to config+versions.
 
-Запуск: python scripts/run_ablation.py [--ckpt P] [--seeds N] [--events K] [--out P]
+Run: python scripts/run_ablation.py [--ckpt P] [--seeds N] [--events K] [--out P]
 """
 
 from __future__ import annotations
@@ -46,18 +46,18 @@ _CKPT = Path("results/policy_pomo_congestion.pt")
 _OUT = Path("results/ablation_summary.json")
 _BUDGETS_MS = (50.0, 100.0, 200.0, 500.0)
 _CFG = CostConfig()
-_POLISH_FLOOR_MS = 3.0  # ниже остатка polish не успеет и одного full-eval → берём raw-старт
+_POLISH_FLOOR_MS = 3.0  # below this remainder polish cannot fit one full eval → take the raw start
 _EPS = 1e-6
 
 
 def _cost(routes, res, travel) -> float:
-    """ЕДИНЫЙ скорер ВСЕХ систем: € = −reward под тем же travel (запрет №3)."""
+    """ONE scorer for ALL systems: € = −reward under the same travel (prohibition #3)."""
     return -evaluate_solution(routes, res, _CFG, travel=travel)["reward"]
 
 
 def _rl_decode(policy, res, travel, fleet):
     env = make_dynamic_env(res, travel=travel, fleet_size=fleet)
-    with torch.no_grad():  # инференс: без autograd-графа (честная латентность)
+    with torch.no_grad():  # inference: no autograd graph (honest latency)
         return policy.rollout(env, mode="greedy")[0]
 
 
@@ -66,17 +66,17 @@ def _greedy(res, travel, fleet):
 
 
 def _run_budget(construct, res, travel, fleet, budget_ms: float) -> dict:
-    """Старт construct() + polish в ОСТАТОК end-to-end бюджета. Превышение → что есть на дедлайне.
+    """construct() start + polish in the REMAINING end-to-end budget. Overrun → deadline snapshot.
 
-    -> {raw_cost, cost (после polish), construct_ms, polish_ms, latency_ms}. Латентность =
-    построение + polish (скоринг — вне тайминга, это измерение, не деплой-стоимость).
+    -> {raw_cost, cost (after polish), construct_ms, polish_ms, latency_ms}. Latency =
+    construction + polish (scoring is outside the timing: it is measurement, not deployment cost).
     """
     t0 = time.perf_counter()
     raw = construct()
     construct_ms = (time.perf_counter() - t0) * 1000.0
     remaining = budget_ms - construct_ms
     routes = raw
-    if remaining > _POLISH_FLOOR_MS:  # anytime: polish сам держит дедлайн по budget_ms
+    if remaining > _POLISH_FLOOR_MS:  # anytime: polish keeps the deadline itself via budget_ms
         routes, _ = polish(raw, res, travel, budget_ms=remaining, fleet_size=fleet)
     latency_ms = (time.perf_counter() - t0) * 1000.0
     return {
@@ -89,8 +89,8 @@ def _run_budget(construct, res, travel, fleet, budget_ms: float) -> dict:
 
 
 def measure_event(policy, seed, ev, res, travel, fleet) -> list[dict]:
-    """Все системы на ОДНОМ событии × все бюджеты. raw-старты — один раз (budget-независимы)."""
-    _rl_decode(policy, res, travel, fleet)  # warmup: гасим torch lazy-init ВНЕ тайминга
+    """All systems on ONE event × all budgets. Raw starts — once (they are budget-independent)."""
+    _rl_decode(policy, res, travel, fleet)  # warmup: absorb torch lazy-init OUTSIDE the timing
     key = {
         "seed": int(seed),
         "event": ev.kind,
@@ -98,7 +98,7 @@ def measure_event(policy, seed, ev, res, travel, fleet) -> list[dict]:
         "n_pending": len(res.demand) - 1,
         "fleet": int(fleet),
     }
-    # budget-независимые старты (считаем один раз, держим константой по бюджетам — advisor #1/#2)
+    # budget-independent starts (computed once, held constant across budgets — advisor #1/#2)
     t0 = time.perf_counter()
     rl_r = _rl_decode(policy, res, travel, fleet)
     rl_ms = (time.perf_counter() - t0) * 1000.0
@@ -126,7 +126,7 @@ def measure_event(policy, seed, ev, res, travel, fleet) -> list[dict]:
 
 
 def _paired(rows, sys_a, sys_b, budget) -> dict:
-    """Δ = cost[a] − cost[b] по событиям при данном budget. a лучше b при Δ < 0."""
+    """Δ = cost[a] − cost[b] over events at the given budget. a is better than b when Δ < 0."""
     a = {(r["seed"], r["at_min"]): r["cost"]
          for r in rows if r["system"] == sys_a and r["budget_ms"] == budget}
     b = {(r["seed"], r["at_min"]): r["cost"]
@@ -138,14 +138,14 @@ def _paired(rows, sys_a, sys_b, budget) -> dict:
         "n": len(d),
         "median_delta_eur": float(np.median(d)) if d else 0.0,
         "mean_delta_eur": float(np.mean(d)) if d else 0.0,
-        "a_wins": int(sum(x < -_EPS for x in d)),  # a строго дешевле
+        "a_wins": int(sum(x < -_EPS for x in d)),  # a strictly cheaper
         "b_wins": int(sum(x > _EPS for x in d)),
         "ties": int(sum(abs(x) <= _EPS for x in d)),
     }
 
 
 def _win_size_profile(rows, budget) -> dict:
-    """Где rl_polish обыгрывает greedy_polish — концентрация на КРУПНЫХ residual (advisor #3)?"""
+    """Where does rl_polish beat greedy_polish — concentrated on LARGE residuals (advisor #3)?"""
     rp = {(r["seed"], r["at_min"]): r
           for r in rows if r["system"] == "rl_polish" and r["budget_ms"] == budget}
     gp = {(r["seed"], r["at_min"]): r
@@ -178,12 +178,12 @@ def analyze(rows) -> dict:
             for s in systems}
         for b in budgets
     }
-    # СТАРТ: опережает ли raw-RL raw-greedy ДО polish (budget-независимо — берём min budget)
+    # START: does raw RL lead raw greedy BEFORE polish (budget-independent — take the min budget)
     start = _paired(rows, "rl_raw", "greedy_raw", budgets[0])
-    # НИША: rl_polish vs greedy_polish по бюджетам + профиль размера побед
+    # NICHE: rl_polish vs greedy_polish across budgets + the win-size profile
     rl_vs_gp = {b: _paired(rows, "rl_polish", "greedy_polish", b) for b in budgets}
     profile = {b: _win_size_profile(rows, b) for b in budgets}
-    # доп.: вклад polish поверх каждого старта (rl_polish vs rl_raw; greedy_polish vs greedy_raw)
+    # extra: the polish contribution on top of each start (rl_polish vs rl_raw; greedy pair)
     polish_gain_rl = {b: _paired(rows, "rl_polish", "rl_raw", b) for b in budgets}
     polish_gain_gr = {b: _paired(rows, "greedy_polish", "greedy_raw", b) for b in budgets}
 
@@ -207,11 +207,11 @@ def analyze(rows) -> dict:
 
 
 def _cell(t, s: str) -> str:
-    return f"{t[s]['cost_eur_mean']:.1f}€/{t[s]['latency_ms_median']:.0f}мс"
+    return f"{t[s]['cost_eur_mean']:.1f}€/{t[s]['latency_ms_median']:.0f}ms"
 
 
 def _print_report(an: dict) -> None:
-    print("\n=== Ablation: budget × система (cost €, латентность мс) — 0004-харнесс ===")
+    print("\n=== Ablation: budget × system (cost €, latency ms) — the 0004 harness ===")
     print(f"{'budget':>7} | {'rl_raw':>14} | {'greedy_raw':>14} | "
           f"{'greedy_polish':>16} | {'rl_polish':>16} | {'rl_pol vs gr_pol':>18}")
     print("-" * 100)
@@ -219,30 +219,30 @@ def _print_report(an: dict) -> None:
         t = an["table"][b]
         p = an["rl_polish_vs_greedy_polish"][b]
         verdict = f"Δ̃{p['median_delta_eur']:+.1f}€ w{p['a_wins']}/l{p['b_wins']}/t{p['ties']}"
-        print(f"{b:6.0f}м | {_cell(t, 'rl_raw'):>14} | {_cell(t, 'greedy_raw'):>14} | "
+        print(f"{b:6.0f}m | {_cell(t, 'rl_raw'):>14} | {_cell(t, 'greedy_raw'):>14} | "
               f"{_cell(t, 'greedy_polish'):>16} | {_cell(t, 'rl_polish'):>16} | {verdict:>18}")
     print("-" * 100)
     s = an["start_rl_vs_greedy"]
-    edge = "RL-старт лучше" if an["start_edge_rl"] else "RL-старт НЕ лучше greedy"
-    print(f"СТАРТ (до polish): rl_raw vs greedy_raw — Δ̃ {s['median_delta_eur']:+.1f}€, "
+    edge = "the RL start is better" if an["start_edge_rl"] else "the RL start is NOT better"
+    print(f"START (before polish): rl_raw vs greedy_raw — Δ̃ {s['median_delta_eur']:+.1f}€, "
           f"rl-wins {s['a_wins']}/{s['n']} → {edge}")
     for b in an["budgets_ms"]:
         pr = an["win_size_profile"][b]
         mn = pr["median_n_pending_rl_wins"]
-        print(f"  @{b:.0f}мс: rl_polish-побед {pr['n_rl_wins']} "
-              f"(медиана n_pending побед={mn if mn is None else round(mn, 1)}, "
-              f"всего медиана n={pr['median_n_pending_all']:.1f}, max n={pr['max_n_pending']})")
+        print(f"  @{b:.0f}ms: rl_polish wins {pr['n_rl_wins']} "
+              f"(median n_pending of wins={mn if mn is None else round(mn, 1)}, "
+              f"overall median n={pr['median_n_pending_all']:.1f}, max n={pr['max_n_pending']})")
     if an["niche_budgets_ms"]:
-        print(f"ВЕРДИКТ: ниша ЕСТЬ на бюджетах {an['niche_budgets_ms']}мс "
-              f"(rl_polish устойчиво < greedy_polish: median Δ<0 И wins>losses).")
+        print(f"VERDICT: the niche EXISTS at budgets {an['niche_budgets_ms']}ms "
+              f"(rl_polish is stably < greedy_polish: median Δ<0 AND wins>losses).")
     else:
-        print("ВЕРДИКТ: ниши НЕТ в достижимом режиме — polish выравнивает старты на ВСЕХ "
-              "бюджетах {50,100,200,500}мс (median Δ≥0 либо wins≤losses). "
-              "Открытый вопрос 0009 закрыт отрицательно для этого харнесса.")
+        print("VERDICT: NO niche in the reachable regime — polish levels the starts at ALL "
+              "budgets {50,100,200,500}ms (median Δ≥0 or wins≤losses). "
+              "The open question of 0009 is closed negatively for this harness.")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Phase 6b Ablation — латентная ниша RL")
+    ap = argparse.ArgumentParser(description="Phase 6b Ablation — the latency niche of RL")
     ap.add_argument("--ckpt", type=str, default=str(_CKPT))
     ap.add_argument("--seeds", type=int, default=5)
     ap.add_argument("--events", type=int, default=6)
@@ -277,13 +277,13 @@ def main() -> None:
         "provenance": rd._provenance(ckpt),
         "analysis": an,
         "records": rows,
-        "note": "cost *_polish систем budget-bound → wall-clock-dependent (сколько ходов влезло до "
-        "дедлайна = как быстро железо; тот же seed → другой маршрут, как OR-Tools в 0004). "
-        "Детерминированы raw-старты (decode/greedy). Единый скорер evaluate_solution под тем же "
-        "travel. Бюджет end-to-end (decode+polish); превышение = дедлайн-снимок. Вне git (№1).",
+        "note": "cost of the *_polish systems is budget-bound → wall-clock-dependent (how many "
+        "moves fit before the deadline = how fast the hardware; the same seed → another route, as "
+        "OR-Tools in 0004). Raw starts (decode/greedy) are deterministic. One scorer "
+        "evaluate_solution under the same travel. Budget end-to-end. Outside git (#1).",
     }
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-    print(f"\nсводка → {out} ({len(rows)} записей)")
+    print(f"\nsummary → {out} ({len(rows)} records)")
 
 
 if __name__ == "__main__":

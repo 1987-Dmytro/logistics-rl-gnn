@@ -9,23 +9,23 @@ venv/
 .coverage
 htmlcov/
 
-# Данные и веса — вне репо (запрет №1: OSM-выгрузки, датасеты, чекпойнты, логи)
-# ВАЖНО: анкор /data/ — иначе паттерн ловит и src/logistics_rl_gnn/data/ (пакет кода!).
-# /data/ = OSM-снапшоты Аугсбурга (data/snapshots/); /cache/ = сырой кэш OSMnx.
+# Data and weights live outside the repo (#1: OSM dumps, datasets, checkpoints, logs)
+# IMPORTANT: anchor /data/ — otherwise the pattern also catches src/logistics_rl_gnn/data/ (code!).
+# /data/ = Augsburg OSM snapshots (data/snapshots/); /cache/ = the raw OSMnx cache.
 /data/
 /cache/
 *.pt
 *.ckpt
 wandb/
 outputs/
-# сводки бейзлайнов/прогонов (сжатая таблица — в decision-записи)
+# baseline/run summaries (the condensed table lives in the decision record)
 /results/
 
-# Phase 8 viz: малые PNG/GIF в git (документир. исключение №1 — README-ассеты);
-# тяжёлое/генерируемое/CDN-зависимое (folium HTML, mp4, фреймы) — вне git.
+# Phase 8 viz: small PNG/GIF in git (a documented exception to #1 — README assets);
+# heavy/generated/CDN-dependent things (folium HTML, mp4, frames) stay out of git.
 /docs/**/*.html
 /docs/assets/*.mp4
 /docs/assets/frames/
 
-# demo.py артефакты (карты/лист) — вне git (запрет №1)
+# demo.py artefacts (maps/sheet) — outside git (prohibition #1)
 /demo_out/

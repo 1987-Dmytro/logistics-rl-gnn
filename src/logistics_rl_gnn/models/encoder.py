@@ -1,10 +1,11 @@
-"""GAT-энкодер статического графа инстанса (Phase 5). Kool-style: кодируем ОДИН раз на
-инстанс, декодер потом ходит по узлам автогрегрессивно.
+"""GAT encoder for the instance's static graph (Phase 5). Kool-style: encode ONCE per
+instance, then the decoder walks the nodes autoregressively.
 
-Вход — нормализованные признаки узла [x, y, demand/Q, e/horizon, l/horizon, service/T_max,
-is_depot, node_congestion] (8) и рёбра полного графа с edge_attr (2): [0] travel_time АКТИВНОЙ
-модели (норм.), [1] congestion_multiplier travel/free_flow (≡1 под free-flow). Выход —
-эмбеддинги узлов [N+1, d_model] + graph_emb (mean-pool). Device-agnostic (обычный nn.Module).
+Input — normalised node features [x, y, demand/Q, e/horizon, l/horizon, service/T_max,
+is_depot, node_congestion] (8) and the edges of the complete graph with edge_attr (2): [0]
+travel_time of the ACTIVE model (normalised), [1] congestion_multiplier travel/free_flow (≡1 under
+free-flow). Output — node embeddings [N+1, d_model] + graph_emb (mean-pool). Device-agnostic
+(a plain nn.Module).
 """
 
 from __future__ import annotations
@@ -24,10 +25,10 @@ class GATEncoder(nn.Module):
         edge_dim: int = 2,
     ):
         super().__init__()
-        assert d_model % heads == 0, "d_model должен делиться на heads"
+        assert d_model % heads == 0, "d_model must be divisible by heads"
         self.in_proj = nn.Linear(in_dim, d_model)
-        # concat=True + out=d_model//heads → выход ровно d_model; self-loops не добавляем
-        # (полный граф уже содержит диагональ (i,i)). edge_dim=2: travel-норма + congestion-множ.
+        # concat=True + out=d_model//heads → output is exactly d_model; no self-loops added
+        # (the complete graph already has the diagonal (i,i)). edge_dim=2: travel norm + congestion.
         self.convs = nn.ModuleList(
             GATv2Conv(
                 d_model,

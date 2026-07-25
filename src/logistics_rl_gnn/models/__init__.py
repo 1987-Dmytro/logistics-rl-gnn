@@ -1,1 +1,1 @@
-"""Phase 5: GNN encoder-decoder — эмбеддинг графа + автогрегрессивный decoder политики."""
+"""Phase 5: GNN encoder-decoder — graph embedding + autoregressive policy decoder."""

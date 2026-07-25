@@ -1,1 +1,1 @@
-"""Phase 3: DynamicVRPEnv — MDP-среда динамического CVRPTW (masking, события, re-plan)."""
+"""Phase 3: DynamicVRPEnv — MDP environment for dynamic CVRPTW (masking, events, re-plan)."""

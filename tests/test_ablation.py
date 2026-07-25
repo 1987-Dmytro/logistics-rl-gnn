@@ -1,9 +1,9 @@
-"""Phase 6b Ablation — стражи латентной ниши RL.
+"""Phase 6b Ablation — guards for the RL latency niche.
 
-Проверяем: (1) end-to-end бюджет соблюдён — латентность ≤ budget+ε, причём дедлайн РЕАЛЬНО
-достигается (иначе тест ложен); (2) единый скорер; (3) детерминизм у СХОДИМОСТИ (щедрый бюджет
-на маленьком инстансе — не budget-bound); (4) measure_event эмитит все системы на каждый бюджет
-и raw_cost консистентен со стартом. torch/torch_geometric обязательны (run_ablation тянет policy).
+We check: (1) the end-to-end budget holds — latency ≤ budget+ε, and the deadline is REALLY hit
+(otherwise the test is vacuous); (2) one scorer; (3) determinism at CONVERGENCE (a generous budget
+on a small instance — not budget-bound); (4) measure_event emits every system at every budget and
+raw_cost is consistent with the start. torch/torch_geometric required (run_ablation pulls policy).
 """
 
 from __future__ import annotations
@@ -27,11 +27,11 @@ import run_ablation as ab  # noqa: E402
 
 
 def _inst(n, *, spread=0.08, seed=0):
-    """Метрический инстанс (времена в СЕК, как реальный): широкие окна, feasible под greedy."""
+    """A metric instance (times in SECONDS, like the real one): wide windows, greedy-feasible."""
     rng = np.random.default_rng(seed)
     coords = np.column_stack([10.0 + rng.uniform(0, spread, n), 48.0 + rng.uniform(0, spread, n)])
     d = np.hypot(coords[:, None, 0] - coords[None, :, 0], coords[:, None, 1] - coords[None, :, 1])
-    tm = d * 6000.0  # сек
+    tm = d * 6000.0  # seconds
     dm = d * 100000.0
     np.fill_diagonal(tm, 0.0)
     np.fill_diagonal(dm, 0.0)
@@ -54,28 +54,28 @@ def _inst(n, *, spread=0.08, seed=0):
 
 
 def test_run_budget_respects_deadline():
-    """Латентность ≤ budget+ε, и дедлайн РЕАЛЬНО бьётся (unbounded polish > budget — advisor #4)."""
+    """Latency ≤ budget+ε, and the deadline is REALLY hit (unbounded polish > budget, adv #4)."""
     inst = _inst(40)
     fleet = 8
     gr = ab._greedy(inst, None, fleet)
-    # премиса: без бюджета polish на n=40 НЕ сходится мгновенно (иначе тест не трогает дедлайн)
+    # premise: without a budget polish on n=40 does NOT converge instantly (else vacuous test)
     t0 = time.perf_counter()
     ab.polish(gr, inst, None, budget_ms=10000.0, fleet_size=fleet)
     conv_ms = (time.perf_counter() - t0) * 1000.0
-    assert conv_ms > 50.0, f"инстанс сходится за {conv_ms:.0f}мс ≤50 — тест не проверяет дедлайн"
-    # ε ≈ несколько full-eval (polish init eval/feas идут ДО дедлайн-часов → ограниченный overshoot)
+    assert conv_ms > 50.0, f"the instance converges in {conv_ms:.0f}ms ≤50 — no deadline tested"
+    # ε ≈ a few full evals (polish init eval/feas run BEFORE the deadline clock → bounded overshoot)
     t0 = time.perf_counter()
     ab._cost(gr, inst, None)
     eval_ms = (time.perf_counter() - t0) * 1000.0
     budget = 50.0
     out = ab._run_budget(lambda: ab._greedy(inst, None, fleet), inst, None, fleet, budget)
     eps = 6 * eval_ms + 20.0
-    assert out["latency_ms"] <= budget + eps, f"{out['latency_ms']:.0f}мс > {budget + eps:.0f}мс"
-    assert out["polish_ms"] > 0.0, "polish не запустился в остаток бюджета"
+    assert out["latency_ms"] <= budget + eps, f"{out['latency_ms']:.0f}ms > {budget + eps:.0f}ms"
+    assert out["polish_ms"] > 0.0, "polish did not run in the remaining budget"
 
 
 def test_single_scorer_identity():
-    """_cost — ровно evaluate_solution (единый скорер всех систем, запрет №3)."""
+    """_cost is exactly evaluate_solution (one scorer for all systems, prohibition #3)."""
     inst = _inst(12)
     gr = ab._greedy(inst, None, 8)
     assert ab._cost(gr, inst, None) == -evaluate_solution(gr, inst, CostConfig(), travel=None)[
@@ -84,7 +84,7 @@ def test_single_scorer_identity():
 
 
 def test_run_budget_raw_cost_matches_and_polish_not_worse():
-    """raw_cost = скорер(старта); polish НЕ хуже входа (инвариант) — единый путь стоимости."""
+    """raw_cost = scorer(start); polish is never worse than the input — one cost path."""
     inst = _inst(15)
     out = ab._run_budget(lambda: ab._greedy(inst, None, 8), inst, None, 8, 100.0)
     assert out["raw_cost"] == ab._cost(ab._greedy(inst, None, 8), inst, None)
@@ -92,7 +92,7 @@ def test_run_budget_raw_cost_matches_and_polish_not_worse():
 
 
 def test_polish_system_deterministic_at_convergence():
-    """У СХОДИМОСТИ (маленький инстанс, щедрый бюджет) cost детерминирован (не budget-bound)."""
+    """At CONVERGENCE (small instance, generous budget) cost is deterministic (not budget-bound)."""
     inst = _inst(7)
     a = ab._run_budget(lambda: ab._greedy(inst, None, 8), inst, None, 8, 5000.0)
     b = ab._run_budget(lambda: ab._greedy(inst, None, 8), inst, None, 8, 5000.0)
@@ -100,12 +100,12 @@ def test_polish_system_deterministic_at_convergence():
 
 
 def _decode_inst(n_pharm=4):
-    """Decode-совместимый инстанс (депо + аптеки, широкие окна) для measure_event."""
+    """A decode-compatible instance (depot + pharmacies, wide windows) for measure_event."""
     return _inst(n_pharm + 1, spread=0.2)
 
 
 def test_measure_event_emits_all_systems_and_raw_consistent():
-    """measure_event: 4 системы × бюджет; rl_polish.raw_cost == rl_raw.cost (advisor #5/#2)."""
+    """measure_event: 4 systems × budget; rl_polish.raw_cost == rl_raw.cost (advisor #5/#2)."""
     from types import SimpleNamespace
 
     import torch
@@ -123,4 +123,4 @@ def test_measure_event_emits_all_systems_and_raw_consistent():
         assert systems == {"rl_raw", "greedy_raw", "greedy_polish", "rl_polish"}
         rl_raw = next(r for r in rows if r["system"] == "rl_raw" and r["budget_ms"] == b)
         rl_pol = next(r for r in rows if r["system"] == "rl_polish" and r["budget_ms"] == b)
-        assert abs(rl_pol["raw_cost"] - rl_raw["cost"]) < 1e-9  # тот же decode, тот же скорер
+        assert abs(rl_pol["raw_cost"] - rl_raw["cost"]) < 1e-9  # same decode, same scorer

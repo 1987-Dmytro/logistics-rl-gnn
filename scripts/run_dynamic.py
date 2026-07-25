@@ -1,16 +1,16 @@
-"""Phase 7 dynamic-прогон: поток событий на M сидов → RL vs OR-Tools vs greedy по
-ЛАТЕНТНОСТИ и КАЧЕСТВУ re-plan. Пишет results/dynamic.json (+ см. decision 0004).
+"""Phase 7 dynamic run: an event stream over M seeds → RL vs OR-Tools vs greedy on re-plan
+LATENCY and QUALITY. Writes results/dynamic.json (+ see decision 0004).
 
-Модель: 8 машин исполняют начальный greedy-план (параллельно от 08:00 под диурнал-congestion).
-На каждом событии-триггере (traffic/breakdown/urgent) снимаем частичное состояние (served — из
-timeline исполняемого плана) и re-plan-им ОСТАВШЕЕСЯ каждым методом.
+Model: 8 vehicles execute the initial greedy plan (in parallel from 08:00 under diurnal congestion).
+At every trigger event (traffic/breakdown/urgent) we take the partial state (served — from the
+timeline of the executed plan) and re-plan what REMAINS with each method.
 
-Воспроизводимость (запрет №4): латентность И качество OR-Tools — wall-clock-dependent (GLS крутит
-соседства до дедлайна → быстрее/свободнее железо укладывает больше итераций → ДРУГОЙ маршрут →
-другой cost/on-time/unserved; проверено: тот же seed+config даёт разные исходы OR-Tools). Только
-качество RL/greedy детерминировано seed+config (+ фикс. чекпойнт весов). Все числа — median/mean
-на фикс. железе, привязаны к config+версиям+hash чекпойнта в dynamic.json, НЕ к абсолюту.
-Запуск: python scripts/run_dynamic.py [--seeds N] [--deadline S] [--events K].
+Reproducibility (prohibition #4): both latency AND quality of OR-Tools are wall-clock-dependent (GLS
+churns neighbourhoods until the deadline → faster/idler hardware fits more iterations → a DIFFERENT
+route → different cost/on-time/unserved; verified: the same seed+config yields different OR-Tools
+outcomes). Only RL/greedy quality is deterministic from seed+config (+ a fixed weight checkpoint).
+All numbers are median/mean on fixed hardware, tied to config+versions+checkpoint hash in the json.
+Run: python scripts/run_dynamic.py [--seeds N] [--deadline S] [--events K].
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def _pkg_version(name: str) -> str:
 
 
 def _provenance(ckpt: Path) -> dict:
-    """Артефакты метрики: hash RL-чекпойнта (вне git) + версии решателей (запрет №4)."""
+    """Metric provenance: RL checkpoint hash (outside git) + solver versions (prohibition #4)."""
     return {
         "checkpoint": {
             "path": str(ckpt),
@@ -67,7 +67,7 @@ def _provenance(ckpt: Path) -> dict:
 
 def _load_policy(ckpt: Path) -> VRPPolicy:
     if not ckpt.exists():
-        raise FileNotFoundError(f"нет весов {ckpt} — сначала обучение (train_pomo.py)")
+        raise FileNotFoundError(f"no weights {ckpt} — train first (train_pomo.py)")
     pol = VRPPolicy()
     pol.load_state_dict(torch.load(ckpt, weights_only=True))
     pol.eval()
@@ -75,27 +75,27 @@ def _load_policy(ckpt: Path) -> VRPPolicy:
 
 
 def iter_events(seeds, *, n_events: int):
-    """Итератор re-plan-событий 0004-харнесса → (seed, ev, res, travel, fleet_size).
+    """Iterator of the 0004 harness re-plan events → (seed, ev, res, travel, fleet_size).
 
-    Тот же поток, что run(): диурнал-план исполняется от 08:00, на каждом СРАБОТАВШЕМ событии
-    снимаем served из timeline и re-plan-им остаток. Отделён, чтобы ablation (run_ablation.py)
-    крутил ТЕ ЖЕ события с идентичной provenance, но своими системами вместо compare_replan."""
+    The same stream as run(): the diurnal plan is executed from 08:00, at every TRIGGERED event we
+    take served from the timeline and re-plan the remainder. Split out so that ablation
+    (run_ablation.py) runs THE SAME events with identical provenance but its own systems."""
     dow = im.DELIVERY_WEEKDAY
     base_k = im.FLEET_SIZE
     for seed in seeds:
         inst = im.generate_instance(seed=seed)
-        exec_travel = congestion_for(inst, dow=dow)  # диурнал (без инцидентов) = timeline плана
+        exec_travel = congestion_for(inst, dow=dow)  # diurnal (no incidents) = the plan timeline
         exec_routes = greedy_routes(env=make_dynamic_env(inst, travel=exec_travel))
         state = DynamicState(inst, dow)
         for ev in event_stream(seed, inst, dow, n_events=n_events):
             state.now_min = float(ev.at_min)
             state.served = served_by(exec_routes, inst, exec_travel, ev.at_min)
-            if not ev.apply(state):  # мутирует incidents/broken/urgent; диурнал → False
+            if not ev.apply(state):  # mutates incidents/broken/urgent; the diurnal → False
                 continue
             n = len(inst.demand)
             pending = [i for i in range(1, n) if i not in state.served]
             if not pending and not state.urgent:
-                continue  # всё обслужено → нечего re-plan-ить
+                continue  # everything served → nothing to re-plan
             res = residual_instance(state)
             travel = congestion_for(
                 res, dow=dow, offset_min=state.now_min, incidents=state.incidents
@@ -128,7 +128,7 @@ def run(seeds, *, deadline_s: int, n_events: int, ckpt: Path, rl_planner=None) -
 def _agg(records, method: str) -> dict:
     r = [x for x in records if x["method"] == method]
     lat = np.array([x["latency_ms"] for x in r])
-    cost = np.array([-x["reward"] for x in r])  # € (положит.)
+    cost = np.array([-x["reward"] for x in r])  # € (positive)
     return {
         "n": len(r),
         "latency_ms_median": float(np.median(lat)),
@@ -141,35 +141,35 @@ def _agg(records, method: str) -> dict:
 
 def _print_table(agg: dict) -> None:
     rl_lat = agg["rl"]["latency_ms_median"]
-    print("\n=== Phase 7 «Стало по скорости реакции» (re-plan, mean по событиям) ===")
+    print("\n=== Phase 7 'after' on reaction speed (re-plan, mean over events) ===")
     print(
-        f"{'метод':8s} | {'латентность (медиана)':>22s} | {'cost,€':>9s} | "
-        f"{'on-time%':>8s} | {'unserved':>8s} | {'× медленнее RL':>14s}"
+        f"{'method':8s} | {'latency (median)':>22s} | {'cost,€':>9s} | "
+        f"{'on-time%':>8s} | {'unserved':>8s} | {'× slower than RL':>14s}"
     )
     print("-" * 92)
     for m in _METHODS:
         a = agg[m]
         slow = a["latency_ms_median"] / rl_lat
-        unit = f"{a['latency_ms_median']:8.1f} мс"
+        unit = f"{a['latency_ms_median']:8.1f} ms"
         print(
             f"{m:8s} | {unit:>22s} | {a['cost_eur_mean']:9.1f} | "
             f"{a['on_time_pct_mean']:8.1f} | {a['unserved_mean']:8.2f} | {slow:13.0f}×"
         )
     print("-" * 92)
     print(
-        f"ГЛАВНЫЙ ГЕЙТ: RL-латентность {rl_lat:.1f}мс << OR-Tools "
-        f"{agg['ortools']['latency_ms_median']:.0f}мс "
+        f"MAIN GATE: RL latency {rl_lat:.1f}ms << OR-Tools "
+        f"{agg['ortools']['latency_ms_median']:.0f}ms "
         f"(×{agg['ortools']['latency_ms_median'] / rl_lat:.0f})."
     )
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=int, default=3, help="число сидов (0..N-1)")
-    ap.add_argument("--deadline", type=int, default=2, help="дедлайн re-solve OR-Tools, сек")
-    ap.add_argument("--events", type=int, default=6, help="событий на сид")
-    ap.add_argument("--ckpt", type=str, default=str(_CKPT), help="RL-чекпойнт (Шаг 2: congestion)")
-    ap.add_argument("--out", type=str, default=str(_OUT), help="выходной JSON")
+    ap.add_argument("--seeds", type=int, default=3, help="number of seeds (0..N-1)")
+    ap.add_argument("--deadline", type=int, default=2, help="OR-Tools re-solve deadline, s")
+    ap.add_argument("--events", type=int, default=6, help="events per seed")
+    ap.add_argument("--ckpt", type=str, default=str(_CKPT), help="RL checkpoint (Step 2)")
+    ap.add_argument("--out", type=str, default=str(_OUT), help="output JSON")
     args = ap.parse_args()
     if args.seeds < 1:
         ap.error("--seeds ≥ 1")
@@ -195,12 +195,12 @@ def main() -> None:
         "provenance": _provenance(ckpt),
         "aggregates": agg,
         "records": res["records"],
-        "note": "латентность И качество OR-Tools — wall-clock-dependent (GLS до дедлайна → "
-        "быстрее железо = другой маршрут = другой cost/on-time/unserved). Детерминировано "
-        "seed+config ТОЛЬКО качество RL/greedy (+ hash чекпойнта). RL free-flow-trained → OOD.",
+        "note": "both latency AND quality of OR-Tools are wall-clock-dependent (GLS until the "
+        "deadline → faster hardware = another route = another cost/on-time/unserved). Only "
+        "RL/greedy quality is seed+config-deterministic (+ checkpoint hash). RL free-flow-trained.",
     }
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-    print(f"\nсводка → {out} ({len(res['records'])} записей)")
+    print(f"\nsummary → {out} ({len(res['records'])} records)")
 
 
 if __name__ == "__main__":

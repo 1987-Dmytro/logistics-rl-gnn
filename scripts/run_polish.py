@@ -1,12 +1,12 @@
-"""Phase 6b Шаг 3.5 — local-search polish (БЕЗ обучения). Чекпойнт: congestion-best.
+"""Phase 6b Step 3.5 — local-search polish (NO training). Checkpoint: congestion-best.
 
-Замеры (тот же протокол, что Шаг 3; provenance → results/polish_summary.json):
-  a) static full-62 / seeds 0–9 / free-flow: polish КАЖДОГО кандидата ДО СХОДИМОСТИ (щедрый бюджет —
-     иначе «polish мало даёт» = артефакт бюджета) → разложение вклада polish поверх greedy vs RL;
-     polished-portfolio vs Step-3 766.1€ vs OR-Tools 611€ → новый gap;
-  b) dynamic 0004 с polish в ОБЩЕМ бюджете (in-budget, не сходимость) → таблица + латентность.
+Measurements (the same protocol as Step 3; provenance → results/polish_summary.json):
+  a) static full-62 / seeds 0–9 / free-flow: polish EVERY candidate TO CONVERGENCE (a generous
+     budget — otherwise "polish gives little" is a budget artefact) → decomposition of the polish
+     contribution over greedy vs RL; polished portfolio vs Step-3 766.1€ vs OR-Tools 611€ → new gap;
+  b) dynamic 0004 with polish inside the SHARED budget (in-budget, not convergence) → table+latency.
 
-Запуск: python scripts/run_polish.py [--ckpt P] [--seeds N] [--dyn-seeds N]
+Run: python scripts/run_polish.py [--ckpt P] [--seeds N] [--dyn-seeds N]
         [--static-budget-ms MS] [--polish-budget-ms MS] [--k-dyn K] [--out P]
 """
 
@@ -71,7 +71,7 @@ def static_polish(pol, seeds, *, budget_ms, k_samples, temp, rl_starts) -> dict:
     def _row(name, raw, pol):
         print(f"  {name:9s}: {raw:7.1f} → {pol:7.1f} €  (polish {pol / raw - 1:+.1%})")
 
-    print(f"\n=== Static polish (full-62, seeds 0–{len(seeds) - 1}, free-flow, до сходимости) ===")
+    print(f"\n=== Static polish (full-62, seeds 0–{len(seeds) - 1}, free-flow, to convergence) ===")
     _row("greedy", m["g_raw"], m["g_pol"])
     _row("RL-multi", m["r_raw"], m["r_pol"])
     _row("sample-K", m["s_raw"], m["s_pol"])
@@ -80,7 +80,7 @@ def static_polish(pol, seeds, *, budget_ms, k_samples, temp, rl_starts) -> dict:
     print(f"    vs Step-3 portfolio 766.1 : {m['port_pol'] / 766.1 - 1:+.1%}")
     print(f"    vs greedy {g_ref:.1f}         : {m['port_pol'] / g_ref - 1:+.1%}")
     print(f"    vs OR-Tools {o_ref:.1f}       : {m['port_pol'] / o_ref - 1:+.1%}  ← new gap")
-    print(f"  RL-edge после polish (RL vs greedy polished): {m['r_pol'] / m['g_pol'] - 1:+.1%}")
+    print(f"  RL edge after polish (RL vs greedy polished): {m['r_pol'] / m['g_pol'] - 1:+.1%}")
     return {
         "budget_ms": budget_ms,
         "seeds": [int(s) for s in seeds],
@@ -92,7 +92,7 @@ def static_polish(pol, seeds, *, budget_ms, k_samples, temp, rl_starts) -> dict:
         "portfolio_vs_step3": m["port_pol"] / 766.1 - 1,
         "polish_delta_greedy": m["g_pol"] / m["g_raw"] - 1,
         "polish_delta_rl": m["r_pol"] / m["r_raw"] - 1,
-        "rl_edge_after_polish": m["r_pol"] / m["g_pol"] - 1,  # <0 → RL всё ещё впереди greedy
+        "rl_edge_after_polish": m["r_pol"] / m["g_pol"] - 1,  # <0 → RL still ahead of greedy
     }
 
 
@@ -113,21 +113,21 @@ def dynamic_polish(planner, seeds, *, deadline_s, n_events, ckpt) -> dict:
     }
     lat = agg["rl"]["latency_ms_median"]
     print(
-        f"ГАРАНТИЯ RL≤greedy: нарушений {guar['violations']}/{guar['n_events']} "
-        f"(худшая Δ {guar['worst_delta_eur']:+.2f}€) | латентность портфель+polish {lat:.0f}мс "
-        f"({'<1с ✓' if lat < 1000 else '≥1с ✗'})"
+        f"GUARANTEE RL≤greedy: violations {guar['violations']}/{guar['n_events']} "
+        f"(worst Δ {guar['worst_delta_eur']:+.2f}€) | latency portfolio+polish {lat:.0f}ms "
+        f"({'<1s ✓' if lat < 1000 else '≥1s ✗'})"
     )
     return {"aggregates": agg, "guarantee": guar, "n_records": len(res["records"])}
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Phase 6b Шаг 3.5 — local-search polish")
+    ap = argparse.ArgumentParser(description="Phase 6b Step 3.5 — local-search polish")
     ap.add_argument("--ckpt", type=str, default=str(_CKPT))
     ap.add_argument("--seeds", type=int, default=10)
     ap.add_argument("--dyn-seeds", type=int, default=5)
-    ap.add_argument("--static-budget-ms", type=float, default=8000.0, help="до сходимости на n=62")
+    ap.add_argument("--static-budget-ms", type=float, default=8000.0, help="to convergence at n=62")
     ap.add_argument(
-        "--polish-budget-ms", type=float, default=400.0, help="dynamic: общий бюджет polish"
+        "--polish-budget-ms", type=float, default=400.0, help="dynamic: shared polish budget"
     )
     ap.add_argument("--k-static", type=int, default=128)
     ap.add_argument("--k-dyn", type=int, default=16)
@@ -183,12 +183,12 @@ def main() -> None:
         "provenance": rd._provenance(ckpt),
         "static": stat,
         "dynamic": dyn,
-        "note": "polish: 2-opt+Or-opt(1-3) intra, relocate+swap inter; стоимость/feasibility — "
-        "единый evaluate_solution/check_feasible (корректно под time-dependent, full-eval per "
-        "move). Инвариант polish ≤ вход. Static — до сходимости; dynamic — in-budget. Вне git №1.",
+        "note": "polish: 2-opt+Or-opt(1-3) intra, relocate+swap inter; cost/feasibility — the "
+        "single evaluate_solution/check_feasible (correct under time-dependence, full eval per "
+        "move). Invariant polish ≤ input. Static: convergence; dynamic: in-budget. Outside git #1.",
     }
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-    print(f"\nсводка → {out}")
+    print(f"\nsummary → {out}")
 
 
 if __name__ == "__main__":

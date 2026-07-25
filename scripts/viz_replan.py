@@ -1,12 +1,12 @@
-"""Phase 8 — анимация re-plan: событие → мгновенная переоптимизация (GIF).
+"""Phase 8 — re-plan animation: an event → instant re-optimisation (GIF).
 
-Два сценария на seed 0 (реальный Аугсбург): (1) traffic — пробка/закрытие на магистрали, задетые
-рёбра красным; (2) breakdown — машина выбывает, её стопы перераспределяются. Кадры: план → событие →
-re-plan. Подпись: RL-реакция ~14–19мс (forward-pass) vs OR-Tools 2001мс (×~130). GIF → docs/assets/
-(малый, в git); тяжёлых mp4/фреймов не пишем. Детерминирован (seed 0). Числа латентности — durable
+Two scenarios on seed 0 (real Augsburg): (1) traffic — a jam/closure on a main road, the hit edges
+in red; (2) breakdown — a vehicle drops out and its stops are redistributed. Frames: plan → event →
+re-plan. Caption: RL reaction ~14–19ms (forward pass) vs OR-Tools 2001ms (×~130). GIF → docs/assets/
+(small, in git); no heavy mp4/frames are written. Deterministic (seed 0). The latency numbers are
 (ablation rl_raw / polish_summary ortools).
 
-Запуск: python scripts/viz_replan.py [--seed 0]
+Run: python scripts/viz_replan.py [--seed 0]
 """
 
 from __future__ import annotations
@@ -44,9 +44,9 @@ _SNAP = Path("data/snapshots/augsburg_20260720")
 _CKPT = Path("results/policy_pomo_congestion.pt")
 _DOW = im.DELIVERY_WEEKDAY
 _COLORS = plt.cm.tab10.colors
-_LAT_RL = "~14–19 мс"  # нейро forward-pass: ПОТОЛОК скорости (но качество-инфериор, 0010)
-_LAT_SYS = "689 мс"  # деплой-система portfolio+polish: ×2.9 к OR ПРИ +3.4% качестве (0009)
-_LAT_OR = "2001 мс"  # polish_summary ortools
+_LAT_RL = "~14–19 ms"  # neural forward pass: the speed CEILING (but quality-inferior, 0010)
+_LAT_SYS = "689 ms"  # deployed portfolio+polish system: ×2.9 vs OR AT +3.4% quality (0009)
+_LAT_OR = "2001 ms"  # polish_summary ortools
 
 
 def _rl_replan(pol, residual, travel, fleet):
@@ -56,7 +56,7 @@ def _rl_replan(pol, residual, travel, fleet):
 
 
 def _near(coords, a, b, center, radius_deg):
-    """Ребро (a,b) проходит близ центра инцидента (грубо: любой конец в радиусе)."""
+    """Edge (a,b) passes near the incident centre (roughly: either end inside the radius)."""
     for n in (a, b):
         dx, dy = abs(coords[n][0] - center[0]), abs(coords[n][1] - center[1])
         if dx < radius_deg and dy < radius_deg:
@@ -65,7 +65,7 @@ def _near(coords, a, b, center, radius_deg):
 
 
 def _frame(graph, inst, routes, title, *, served=None, incident=None, hit_center=None):
-    """Один кадр → RGB-массив. served (серым), incident (красный круг+задетые рёбра красным)."""
+    """One frame → an RGB array. served (grey), incident (red circle + hit edges in red)."""
     fig, ax = plt.subplots(figsize=(7.4, 7.4))
     ox.plot_graph(graph, ax=ax, node_size=0, edge_color="#e3e3e3", edge_linewidth=0.4,
                   show=False, close=False, bgcolor="white")
@@ -106,7 +106,7 @@ def _frame(graph, inst, routes, title, *, served=None, incident=None, hit_center
 
 def _scenario_traffic(graph, inst, exec_routes, exec_travel, pol, now_min):
     served = served_by(exec_routes, inst, exec_travel, now_min)
-    # центр инцидента: аптека-стоп ближе к центру города (медиана координат)
+    # incident centre: the pharmacy stop closest to the city centre (median of coordinates)
     ph = np.array([inst.coords[i] for i in range(1, len(inst.demand))])
     center = tuple(ph[np.argmin(np.hypot(*(ph - ph.mean(0)).T))])
     inc = Incident(center, cg.INCIDENT_RADIUS_KM, np.inf, now_min, 240.0)
@@ -116,20 +116,20 @@ def _scenario_traffic(graph, inst, exec_routes, exec_travel, pol, now_min):
     res = residual_instance(st)
     travel = congestion_for(res, dow=_DOW, offset_min=now_min, incidents=st.incidents)
     new = _rl_replan(pol, res, travel, st.fleet(im.FLEET_SIZE))
-    # residual-маршруты в исходной нумерации (для отрисовки на полном инстансе)
+    # residual routes in the original numbering (to draw them on the full instance)
     idx = [0] + sorted(i for i in range(1, len(inst.demand)) if i not in served)
     new_full = [[idx[n] for n in r] for r in new]
     return [
-        _frame(graph, inst, exec_routes, "1. План на старте (8 машин, 62 аптеки)"),
-        _frame(graph, inst, exec_routes, f"2. Исполнение (~{now_min:.0f} мин, часть обслужена)",
+        _frame(graph, inst, exec_routes, "1. Plan at the start (8 vehicles, 62 pharmacies)"),
+        _frame(graph, inst, exec_routes, f"2. Execution (~{now_min:.0f} min, partly served)",
                served=served),
-        _frame(graph, inst, exec_routes, "3. СОБЫТИЕ: закрытие/пробка на магистрали",
+        _frame(graph, inst, exec_routes, "3. EVENT: closure/jam on a main road",
                served=served, incident=center, hit_center=center),
         _frame(graph, inst, new_full,
-               f"4. RE-PLAN: нейро-старт {_LAT_RL} (forward-pass, без polish)",
+               f"4. RE-PLAN: neural start {_LAT_RL} (forward pass, no polish)",
                served=served, incident=center),
         _frame(graph, inst, new_full,
-               f"нейро {_LAT_RL} (потолок) · система {_LAT_SYS} = ×2.9 к OR ({_LAT_OR})",
+               f"neural {_LAT_RL} (ceiling) · system {_LAT_SYS} = ×2.9 vs OR ({_LAT_OR})",
                served=served, incident=center),
     ]
 
@@ -138,21 +138,21 @@ def _scenario_breakdown(graph, inst, exec_routes, exec_travel, pol, now_min):
     served = served_by(exec_routes, inst, exec_travel, now_min)
     st = DynamicState(inst, _DOW, now_min=now_min)
     st.served = served
-    BreakdownEvent(now_min).apply(st)  # −1 машина; её стопы уже в пуле необслуженных
+    BreakdownEvent(now_min).apply(st)  # −1 vehicle; its stops are already in the unserved pool
     res = residual_instance(st)
     travel = congestion_for(res, dow=_DOW, offset_min=now_min)
     new = _rl_replan(pol, res, travel, st.fleet(im.FLEET_SIZE))
     idx = [0] + sorted(i for i in range(1, len(inst.demand)) if i not in served)
     new_full = [[idx[n] for n in r] for r in new]
     return [
-        _frame(graph, inst, exec_routes, "1. План на старте (8 машин)"),
-        _frame(graph, inst, exec_routes, f"2. Исполнение (~{now_min:.0f} мин)", served=served),
-        _frame(graph, inst, exec_routes, "3. СОБЫТИЕ: машина сломалась — стопы осиротели",
+        _frame(graph, inst, exec_routes, "1. Plan at the start (8 vehicles)"),
+        _frame(graph, inst, exec_routes, f"2. Execution (~{now_min:.0f} min)", served=served),
+        _frame(graph, inst, exec_routes, "3. EVENT: a vehicle broke down — stops orphaned",
                served=served),
-        _frame(graph, inst, new_full, f"4. RE-PLAN {_LAT_RL}: 7 машин, стопы перераспределены",
+        _frame(graph, inst, new_full, f"4. RE-PLAN {_LAT_RL}: 7 vehicles, stops redistributed",
                served=served),
         _frame(graph, inst, new_full,
-               f"нейро {_LAT_RL} (потолок) · система {_LAT_SYS} = ×2.9 к OR ({_LAT_OR})",
+               f"neural {_LAT_RL} (ceiling) · system {_LAT_SYS} = ×2.9 vs OR ({_LAT_OR})",
                served=served),
     ]
 
@@ -175,10 +175,10 @@ def main() -> None:
 
     for name, fn in (("traffic", _scenario_traffic), ("breakdown", _scenario_breakdown)):
         frames = fn(graph, inst, exec_routes, exec_travel, pol, args.now_min)
-        durations = [1.3, 1.3, 1.8, 1.8, 2.2]  # держим событие/re-plan дольше
+        durations = [1.3, 1.3, 1.8, 1.8, 2.2]  # hold the event/re-plan frames longer
         out = outdir / f"replan_{name}.gif"
         imageio.mimsave(out, frames, duration=durations, loop=0)
-        print(f"→ {out}  ({out.stat().st_size / 1024:.0f} KB, {len(frames)} кадров)")
+        print(f"→ {out}  ({out.stat().st_size / 1024:.0f} KB, {len(frames)} frames)")
 
 
 if __name__ == "__main__":

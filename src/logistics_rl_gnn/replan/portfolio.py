@@ -1,11 +1,11 @@
-"""Инференс-поиск (Phase 6b Шаг 3): sample-K take-best + PortfolioPlanner. БЕЗ обучения.
+"""Inference search (Phase 6b Step 3): sample-K take-best + PortfolioPlanner. NO training.
 
-PortfolioPlanner собирает кандидаты { sample-K(RL, temperature) ∪ RL-multistart-greedy ∪
-greedy-эвристика } и берёт лучший ЕДИНЫМ scorer'ом (`evaluate_solution` под ТЕМ ЖЕ travel).
-Гарантия ПО ПОСТРОЕНИЮ: результат ≤ greedy-эвристика — greedy-кандидат строится тем же
-`greedy_routes(env=make_dynamic_env(inst, travel, fleet_size))` и скорится тем же scorer'ом,
-что метод `greedy` в таблице → `min(кандидаты) ≤ greedy` тождественно (запрет №3 цел).
-Латентность end-to-end (encode+decode+scoring), медиана реплик на фикс. железе.
+PortfolioPlanner collects candidates { sample-K(RL, temperature) ∪ RL-multistart-greedy ∪
+greedy heuristic } and takes the best with the SINGLE scorer (`evaluate_solution` under the SAME
+travel). Guarantee BY CONSTRUCTION: the result ≤ the greedy heuristic — the greedy candidate is
+built by the same `greedy_routes(env=make_dynamic_env(inst, travel, fleet_size))` and scored by
+the same scorer as the `greedy` row in the table → `min(candidates) ≤ greedy` identically (#3).
+Latency is end-to-end (encode+decode+scoring), median over replicas on fixed hardware.
 """
 
 from __future__ import annotations
@@ -22,31 +22,31 @@ from logistics_rl_gnn.train.pomo import multistart_greedy
 
 
 def take_best(candidates, instance, travel, cfg: CostConfig, scores_out=None) -> tuple:
-    """Лучший маршрут-кандидат ЕДИНЫМ scorer'ом. -> (routes, cost€, idx). cost = −reward.
-    idx — индекс в ИСХОДНОМ списке (None-кандидаты пропускаем, но нумерацию сохраняем).
-    scores_out (опц. список) наполняется [(idx, cost€)] — таблица кандидатов даром, из уже
-    посчитанного (новый scoring внутри timed-блока исказил бы латентность)."""
+    """Best candidate route by the SINGLE scorer. -> (routes, cost€, idx). cost = −reward.
+    idx is the index in the ORIGINAL list (None candidates are skipped, numbering is preserved).
+    scores_out (optional list) is filled with [(idx, cost€)] — the candidate table for free, out
+    of what was already computed (fresh scoring inside the timed block would skew latency)."""
     scored = [
         (i, -evaluate_solution(r, instance, cfg, travel=travel)["reward"])
         for i, r in enumerate(candidates)
         if r is not None
     ]
-    assert scored, "нет валидных кандидатов (greedy должен быть всегда)"
+    assert scored, "no valid candidates (greedy must always be there)"
     if scores_out is not None:
         scores_out.extend(scored)
     i, cost = min(scored, key=lambda ic: ic[1])
     return candidates[i], cost, i
 
 
-# человекочитаемые имена источников кандидатов (демо печатает таблицу этими подписями)
-SOURCE_RU = {"greedy": "greedy-эвристика", "rl_greedy": "RL multistart", "sample": "RL sample-K"}
-_RL_SOURCES = ("rl_greedy", "sample")  # кандидаты, порождённые МОДЕЛЬЮ (ablation --no-model)
+# human-readable names of candidate sources (the demo prints the table with these labels)
+SOURCE_RU = {"greedy": "greedy heuristic", "rl_greedy": "RL multistart", "sample": "RL sample-K"}
+_RL_SOURCES = ("rl_greedy", "sample")  # candidates produced by the MODEL (ablation --no-model)
 
 
 def candidate_rows(labels, scores) -> list[dict]:
-    """[(idx, cost)] + метки → таблица по источникам: {source, n, cost(лучший), mean, polished}.
+    """[(idx, cost)] + labels → a per-source table: {source, n, cost(best), mean, polished}.
 
-    polished=None → источник в polish не попал (top-M): честное «—», НЕ подстановка сырого.
+    polished=None → the source never reached polish (top-M): an honest "—", NOT the raw value.
     """
     agg: dict[str, dict] = {}
     for i, cost in scores:
@@ -70,17 +70,17 @@ def candidate_rows(labels, scores) -> list[dict]:
 
 
 def rl_candidate_mean(rows) -> float | None:
-    """Средняя сырая стоимость кандидатов МОДЕЛИ (weight-swap-страж). Нет RL-строк → None."""
+    """Mean raw cost of the MODEL's candidates (weight-swap guard). No RL rows → None."""
     rl = [r for r in rows if r["source"] in _RL_SOURCES]
     n = sum(r["n"] for r in rl)
     return None if n == 0 else sum(r["mean"] * r["n"] for r in rl) / n
 
 
 class PortfolioPlanner:
-    """RL-портфель re-plan: sample-K ∪ RL-multistart-greedy ∪ greedy → best (≤ greedy).
+    """RL re-plan portfolio: sample-K ∪ RL-multistart-greedy ∪ greedy → best (≤ greedy).
 
-    policy=None → ablation `--no-model`: RL-кандидаты НЕ порождаются вовсе (портфель = greedy
-    (+polish)); честный контрфактуал «сколько даёт модель», а не тихий фолбэк.
+    policy=None → ablation `--no-model`: RL candidates are NOT produced at all (the portfolio is
+    greedy (+polish)); an honest counterfactual "what the model adds", not a silent fallback.
     """
 
     def __init__(
@@ -99,35 +99,35 @@ class PortfolioPlanner:
         self.temperature = float(temperature)
         self.rl_starts = int(rl_starts)
         self.seed = int(seed)
-        self.polish_budget_ms = float(polish_budget_ms)  # 0 → polish выключен (Шаг 3.5)
+        self.polish_budget_ms = float(polish_budget_ms)  # 0 → polish disabled (Step 3.5)
         self.polish_top_m = int(polish_top_m)
 
     def _candidates(self, instance, travel, fleet_size: int):
-        """Все кандидаты (детерминированы seed): (greedy, rl-multistart, [K sample-роллаутов])."""
-        # greedy-эвристика — ИДЕНТИЧНА методу greedy в таблице (на этом держится гарантия ≤ greedy)
+        """All candidates (seed-deterministic): (greedy, rl-multistart, [K sample rollouts])."""
+        # the greedy heuristic is IDENTICAL to the greedy row in the table (the ≤ greedy guarantee)
         gr = greedy_routes(env=make_dynamic_env(instance, travel=travel, fleet_size=fleet_size))
-        if self.policy is None:  # --no-model: портфель БЕЗ кандидатов модели
+        if self.policy is None:  # --no-model: a portfolio WITHOUT model candidates
             return gr, None, []
-        # RL multistart-greedy (POMO distinct-first-starts — основной источник качества)
+        # RL multistart-greedy (POMO distinct-first-starts — the main source of quality)
         env = make_dynamic_env(instance, travel=travel, fleet_size=fleet_size)
         _, rl_routes = multistart_greedy(self.policy, env, self.rl_starts)
-        # sample-K (temperature-стохастика) — БАТЧЕВЫЙ decode (один encode, K роллаутов)
+        # sample-K (temperature stochasticity) — BATCHED decode (one encode, K rollouts)
         envs = [
             make_dynamic_env(instance, travel=travel, fleet_size=fleet_size)
             for _ in range(self.k_samples)
         ]
-        envs[0].reset(seed=0)  # encode на общем статическом графе (sample_k пересбросит все копии)
+        envs[0].reset(seed=0)  # encode on the shared static graph (sample_k re-resets all copies)
         enc = self.policy.encode(envs[0])
         sk = self.policy.sample_k(envs, enc, temperature=self.temperature, seed=self.seed)
         return gr, rl_routes, sk
 
     def _select(self, instance, travel, fleet_size: int, cfg: CostConfig) -> dict:
-        """Кандидаты → (опц.) polish топ-M в общем бюджете → best. Внутри timed-блока plan()."""
+        """Candidates → (opt.) polish of top-M in a shared budget → best. Inside plan()'s timer."""
         gr, rl_routes, sk = self._candidates(instance, travel, fleet_size)
-        cands = [gr, rl_routes, *sk]  # rl_routes=None при отсутствии feasible POMO-старта
+        cands = [gr, rl_routes, *sk]  # rl_routes=None when no feasible POMO start exists
         labels = ["greedy", "rl_greedy", *(["sample"] * len(sk))]
         greedy_cost = -evaluate_solution(gr, instance, cfg, travel=travel)["reward"]
-        if self.polish_budget_ms > 0:  # Шаг 3.5: полируем топ-M кандидатов в ОБЩЕМ бюджете
+        if self.polish_budget_ms > 0:  # Step 3.5: polish the top-M candidates in a SHARED budget
             scored = [
                 (i, -evaluate_solution(c, instance, cfg, travel=travel)["reward"])
                 for i, c in enumerate(cands)
@@ -135,8 +135,8 @@ class PortfolioPlanner:
             ]
             top = [i for i, _ in sorted(scored, key=lambda ic: ic[1])[: self.polish_top_m]]
             per = self.polish_budget_ms / max(1, len(top))
-            _, cap = im.fleet_of(instance)  # Q сценария (иначе def-time дефолт polish)
-            for i in top:  # исходные кандидаты остаются в пуле → гарантия ≤ greedy цела
+            _, cap = im.fleet_of(instance)  # scenario Q (else the def-time polish default)
+            for i in top:  # the original candidates stay in the pool → the ≤ greedy guarantee holds
                 pr, _ = polish(cands[i], instance, travel, budget_ms=per, fleet_size=fleet_size,
                                vehicle_cap=cap)
                 cands.append(pr)
@@ -146,20 +146,20 @@ class PortfolioPlanner:
         return {
             "routes": best_routes,
             "cost": best_cost,
-            "greedy_cost": greedy_cost,  # гарантия: best_cost ≤ greedy_cost (тот же scorer)
+            "greedy_cost": greedy_cost,  # guarantee: best_cost ≤ greedy_cost (same scorer)
             "source": labels[idx],
             "n_candidates": sum(c is not None for c in cands),
-            "rows": candidate_rows(labels, scores),  # даром из уже посчитанного (см. take_best)
+            "rows": candidate_rows(labels, scores),  # free, from what was computed (see take_best)
         }
 
     def plan(self, instance, travel, *, fleet_size: int, reps: int = 1, warmup: int = 0) -> dict:
-        """Re-plan портфелем. -> {routes, cost, greedy_cost, source, n_candidates, latency_ms}."""
+        """Portfolio re-plan. -> {routes, cost, greedy_cost, source, n_candidates, latency_ms}."""
         cfg = CostConfig()
-        for _ in range(warmup):  # torch lazy-init гасим (честная латентность)
+        for _ in range(warmup):  # absorb torch lazy-init (honest latency)
             self._select(instance, travel, fleet_size, cfg)
         ts: list[float] = []
         out: dict = {}
-        for _ in range(max(1, reps)):  # детерминизм по seed → реплики идентичны; меряем время
+        for _ in range(max(1, reps)):  # seed-deterministic → replicas identical; we time them
             t0 = time.perf_counter()
             out = self._select(instance, travel, fleet_size, cfg)
             ts.append((time.perf_counter() - t0) * 1000.0)

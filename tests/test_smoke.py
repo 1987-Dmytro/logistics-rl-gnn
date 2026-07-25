@@ -1,4 +1,4 @@
-"""Smoke-тест: пакет импортируется и версия совпадает."""
+"""Smoke test: the package imports and the version matches."""
 
 import logistics_rl_gnn
 

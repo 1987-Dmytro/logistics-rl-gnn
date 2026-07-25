@@ -1,1 +1,1 @@
-"""Конфиги инстанса/флота/congestion (dataclass-параметры, [ASSUMED]-значения)."""
+"""Instance/fleet/congestion configs (dataclass parameters, [ASSUMED] values)."""

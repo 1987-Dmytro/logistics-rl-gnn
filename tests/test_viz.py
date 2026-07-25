@@ -1,8 +1,8 @@
-"""Phase 8 — стражи viz/метрик: парити final_metrics с decision 0002/0008/0009, идемпотентность,
-детерминизм, не-мутация durable json. Скрипты-картинки seeded (torch.manual_seed(0), фикс. seed) →
-детерминизм проверяем на их ДЕТЕРМИНИР. ядре (parse/build), не на байтах PNG (там таймстамп).
+"""Phase 8 — viz/metric guards: final_metrics parity with decision 0002/0008/0009, idempotence,
+determinism, no mutation of the durable json. The image scripts are seeded (torch.manual_seed(0))
+→ determinism is checked on their DETERMINISTIC core (parse/build), not on PNG bytes (timestamps).
 
-Durable results/*.json — ВНЕ git (запрет №1) → парити-тест skipif при отсутствии.
+Durable results/*.json are OUTSIDE git (#1) → the parity test is skipped when they are absent.
 """
 
 from __future__ import annotations
@@ -18,15 +18,15 @@ sys.path.insert(0, str(_ROOT / "scripts"))
 
 import final_metrics as fm  # noqa: E402
 
-# viz_training тянет matplotlib (группа [viz]) на уровне модуля → импортим лениво в тесте под
-# importorskip; иначе на голом раннере (без [viz]) collection упадёт ImportError.
+# viz_training pulls matplotlib (group [viz]) at module level → imported lazily in the test under
+# importorskip; otherwise a bare runner (without [viz]) fails collection with ImportError.
 
 _JSON = ("baselines.json", "system_metrics.json", "polish_summary.json")
 _NEED = [_ROOT / "results" / f for f in _JSON]
 _HAVE = all(p.exists() for p in _NEED)
-_skip = pytest.mark.skipif(not _HAVE, reason="durable results/*.json вне git (запрет №1)")
+_skip = pytest.mark.skipif(not _HAVE, reason="durable results/*.json outside git (#1)")
 
-# decision-якоря (парити) — числа из 0002 (greedy/OR), 0009 (система), 0008 (portfolio до polish)
+# decision anchors (parity) — numbers from 0002 (greedy/OR), 0009 (system), 0008 (pre-polish)
 _ANCHOR_0002_GREEDY = 825.38
 _ANCHOR_0002_ORTOOLS = 611.14
 _ANCHOR_0009_SYSTEM = 631.62
@@ -35,62 +35,62 @@ _ANCHOR_0008_PORTFOLIO = 766.14
 
 @_skip
 def test_final_metrics_parity_with_decisions():
-    """final_metrics сходится с числами decision 0002/0009 (иначе артефакты разъехались)."""
+    """final_metrics agrees with the numbers of decision 0002/0009 (else the artefacts drifted)."""
     m = fm.build()
     r = m["rows"]
     assert abs(r["greedy"]["cost_eur"] - _ANCHOR_0002_GREEDY) < 0.5
     assert abs(r["ortools"]["cost_eur"] - _ANCHOR_0002_ORTOOLS) < 0.5
-    assert abs(r["system"]["cost_eur"] - _ANCHOR_0009_SYSTEM) < 0.5  # парити к 0009 631.6
-    # 0008-цепочка (portfolio до polish) в провенансе
+    assert abs(r["system"]["cost_eur"] - _ANCHOR_0009_SYSTEM) < 0.5  # parity to 0009 631.6
+    # the 0008 chain (portfolio before polish) in the provenance
     assert abs(m["provenance"]["step3_portfolio_eur"] - _ANCHOR_0008_PORTFOLIO) < 0.5
 
 
 @_skip
 def test_final_metrics_deltas_direction():
-    """Знаки/порядок дельт: система −23.5% к greedy, +3.4% к OR, реакция ×>1 vs OR-Tools."""
+    """Signs/order of the deltas: system −23.5% vs greedy, +3.4% vs OR, reaction ×>1 vs OR-Tools."""
     d = fm.build()["deltas"]
     assert -0.30 < d["cost_vs_greedy"] < -0.18  # ≈ −23.5%
     assert 0.0 < d["cost_vs_ortools"] < 0.08  # ≈ +3.4%
-    assert d["distance_vs_greedy"] < 0.02  # пробег ~flat/чуть ниже (честно: не главный рычаг)
-    assert d["time_vs_greedy"] < 0.0  # время ниже
-    assert d["reaction_speedup_vs_ortools"] > 1.0  # быстрее OR-Tools
+    assert d["distance_vs_greedy"] < 0.02  # distance ~flat/slightly lower (not the main lever)
+    assert d["time_vs_greedy"] < 0.0  # time is lower
+    assert d["reaction_speedup_vs_ortools"] > 1.0  # faster than OR-Tools
 
 
 @_skip
 def test_final_metrics_idempotent_and_pure():
-    """build() идемпотентен + НЕ мутирует durable json (только читает)."""
+    """build() is idempotent + does NOT mutate the durable json (read-only)."""
     before = hashlib.sha256((_ROOT / "results" / "baselines.json").read_bytes()).hexdigest()
     a = fm.build()
     b = fm.build()
     after = hashlib.sha256((_ROOT / "results" / "baselines.json").read_bytes()).hexdigest()
-    assert a == b, "build() не идемпотентен"
-    assert before == after, "build() мутировал baselines.json"
+    assert a == b, "build() is not idempotent"
+    assert before == after, "build() mutated baselines.json"
 
 
 def test_eval_system_anchor_matches_0009():
-    """Якорь парити в eval_system == durable 0009 631.6€ (self-consistency, без прогона)."""
+    """The parity anchor in eval_system == durable 0009 631.6€ (self-consistency, no run)."""
     import eval_system as es
 
     assert abs(es._DURABLE_COST_0009 - _ANCHOR_0009_SYSTEM) < 0.01
 
 
 def test_viz_training_parse_deterministic():
-    """parse_log детерминирован; на известном логе даёт непустые (epoch,cost) — если лог есть."""
-    pytest.importorskip("matplotlib")  # viz_training тянет matplotlib (группа [viz])
+    """parse_log is deterministic; on a known log it yields non-empty (epoch,cost) if present."""
+    pytest.importorskip("matplotlib")  # viz_training pulls matplotlib (group [viz])
     import viz_training as vt
 
     log = _ROOT / "results" / "pomo_20260721_1914.log"
     if not log.exists():
-        pytest.skip("тренировочный лог вне git")
+        pytest.skip("the training log is outside git")
     a = vt.parse_log(str(log))
     b = vt.parse_log(str(log))
-    assert a == b and len(a[0]) > 0  # (epochs, costs, hs) воспроизводимо и непусто
+    assert a == b and len(a[0]) > 0  # (epochs, costs, hs) reproducible and non-empty
 
 
 def test_final_metrics_md_table_shape():
-    """_fmt_md даёт MD-таблицу с 3 системами + ключевыми метриками (если durable есть)."""
+    """_fmt_md yields an MD table with 3 systems + the key metrics (when durable json exist)."""
     if not _HAVE:
-        pytest.skip("durable json вне git")
+        pytest.skip("durable json outside git")
     md = fm._fmt_md(fm.build())
-    assert "| Метрика |" in md and "Издержки, €" in md
-    assert "Латентность re-plan" in md and "Пробег" in md
+    assert "| Metric |" in md and "Costs, €" in md
+    assert "Re-plan latency" in md and "Distance" in md

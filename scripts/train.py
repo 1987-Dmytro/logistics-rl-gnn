@@ -1,5 +1,5 @@
-"""Обучение RL (Phase 6). Smoke: python scripts/train.py --smoke  (2 эпохи, cost↓/энтропия).
-Полный: python scripts/train.py [--epochs N]  → «Стало» на full-62 vs «Было» (baselines.json).
+"""RL training (Phase 6). Smoke: python scripts/train.py --smoke  (2 epochs, cost↓/entropy).
+Full: python scripts/train.py [--epochs N]  → "after" on full-62 vs "before" (baselines.json).
 """
 
 from __future__ import annotations
@@ -27,16 +27,16 @@ def _log(rec: dict) -> None:
 
 
 def eval_full62(policy, seeds) -> tuple[float, list[float]]:
-    """Политика (greedy) на ПОЛНЫХ инстансах (== «Было» Phase 4): валидный Было/Стало."""
+    """Policy (greedy) on FULL instances (== the Phase 4 "before"): a valid before/after."""
     env = VRPEnv()
     costs = [-policy.rollout(env, mode="greedy", seed=int(s))[2]["reward"] for s in seeds]
     return float(np.mean(costs)), costs
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="RL-обучение CVRPTW (Phase 6)")
-    ap.add_argument("--smoke", action="store_true", help="2 эпохи, малый batch (демо механизма)")
-    ap.add_argument("--epochs", type=int, help="переопределить число эпох")
+    ap = argparse.ArgumentParser(description="RL training for CVRPTW (Phase 6)")
+    ap.add_argument("--smoke", action="store_true", help="2 epochs, small batch (mechanism demo)")
+    ap.add_argument("--epochs", type=int, help="override the number of epochs")
     args = ap.parse_args()
 
     cfg = TrainConfig.smoke() if args.smoke else TrainConfig()
@@ -52,25 +52,25 @@ def main() -> None:
     )
     trainer.fit(log_fn=_log)
 
-    # финал: «Стало» на full-62/seeds 0-9 vs «Было» (baselines.json)
+    # final: "after" on full-62/seeds 0-9 vs "before" (baselines.json)
     best = policy
     if cfg.ckpt and Path(cfg.ckpt).exists():
         best = VRPPolicy()
-        best.load_state_dict(torch.load(cfg.ckpt, weights_only=True))  # только тензоры
+        best.load_state_dict(torch.load(cfg.ckpt, weights_only=True))  # tensors only
     stalo, _ = eval_full62(best, cfg.eval_seeds)
-    print("\n=== Стало vs Было (full-62, seeds 0–9, greedy-decode) ===")
+    print("\n=== After vs Before (full-62, seeds 0–9, greedy decode) ===")
     bl = Path("results/baselines.json")
     if bl.exists():
         ref = json.loads(bl.read_text())
         g = -ref["greedy"]["agg"]["reward"]["mean"]
         o = -ref["ortools"]["agg"]["reward"]["mean"]
-        print(f"  RL «Стало» : {stalo:7.1f} €")
+        print(f"  RL 'after' : {stalo:7.1f} €")
         print(f"  greedy      : {g:7.1f} €  (RL gap {stalo / g - 1:+.1%})")
         print(f"  OR-Tools    : {o:7.1f} €  (RL gap {stalo / o - 1:+.1%})")
     else:
-        print(f"  RL «Стало» : {stalo:7.1f} €  (нет baselines.json — запусти run_baselines.py)")
+        print(f"  RL 'after' : {stalo:7.1f} €  (no baselines.json — run run_baselines.py)")
     if args.smoke:
-        print("  [smoke: короткий прогон — число иллюстративно; реальное «Стало» — полный прогон]")
+        print("  [smoke: short run — the number is illustrative; a real 'after' needs a full run]")
 
 
 if __name__ == "__main__":

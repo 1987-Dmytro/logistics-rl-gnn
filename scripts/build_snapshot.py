@@ -1,6 +1,6 @@
-"""Phase 2 пайплайн: OSM Аугсбург → data/snapshots/augsburg_<YYYYMMDD>/. НЕ тест.
+"""Phase 2 pipeline: OSM Augsburg → data/snapshots/augsburg_<YYYYMMDD>/. NOT a test.
 
-Требует сеть (Overpass/Nominatim). Печатает счётчики и % покрытия maxspeed.
+Requires network access (Overpass/Nominatim). Prints counters and the maxspeed coverage %.
 """
 
 from __future__ import annotations
@@ -17,15 +17,15 @@ from logistics_rl_gnn.data import osm, snapshot
 
 
 def main() -> None:
-    print(f"[1/5] drive-граф {cfg.PLACE} …")
+    print(f"[1/5] drive graph {cfg.PLACE} …")
     g = osm.load_drive_graph(cfg.PLACE)
-    print(f"      узлов={g.number_of_nodes()} рёбер={g.number_of_edges()}")
+    print(f"      nodes={g.number_of_nodes()} edges={g.number_of_edges()}")
 
-    print("[2/5] импутация скоростей (немецкий фолбэк) …")
+    print("[2/5] speed imputation (German fallback) …")
     g, coverage = osm.impute_speeds(g)
-    print(f"      maxspeed-покрытие (реальный тег) = {coverage:.1f}%")
+    print(f"      maxspeed coverage (real tag) = {coverage:.1f}%")
 
-    print("[3/5] аптеки + депо …")
+    print("[3/5] pharmacies + depot …")
     ph = osm.load_pharmacies(cfg.PLACE)
     n_ph = len(ph)
     oh_col = ph["opening_hours"].astype("string").str.strip()
@@ -33,36 +33,36 @@ def main() -> None:
     oh_present_pct = round(100.0 * int(oh_present.sum()) / n_ph, 2) if n_ph else 0.0
     ph_oh = ph["opening_hours"].to_numpy()
     depot_lat, depot_lon = osm.geocode_depot(cfg.DEPOT_ADDR)
-    print(f"      аптек={n_ph} (opening_hours={oh_present_pct}%)")
-    print(f"      депо=({depot_lat:.5f}, {depot_lon:.5f})")
+    print(f"      pharmacies={n_ph} (opening_hours={oh_present_pct}%)")
+    print(f"      depot=({depot_lat:.5f}, {depot_lon:.5f})")
 
-    print("[4/5] снаппинг к узлам …")
+    print("[4/5] snapping to nodes …")
     ph_points = list(zip(ph["x"].to_numpy(), ph["y"].to_numpy(), strict=True))  # (lon, lat)
     ph_nodes = [int(n) for n in osm.snap_to_nodes(g, ph_points)]
     depot_arr, depot_dist_arr = osm.snap_to_nodes(g, [(depot_lon, depot_lat)], return_dist=True)
     depot_node = int(depot_arr[0])
     depot_dist = float(depot_dist_arr[0])
     if depot_dist > 500:
-        print(f"      ⚠ депо снапнут на {depot_dist:.0f} м (Stadtbergen вне границы Аугсбурга)")
+        print(f"      ⚠ depot snapped {depot_dist:.0f} m away (Stadtbergen is outside Augsburg)")
 
-    # collision-диагностика: сколько аптек делят общий nearest-узел
+    # collision diagnostics: how many pharmacies share one nearest node
     node_counts = Counter(ph_nodes)
     shared = [n for n, c in node_counts.items() if c > 1]
     collapsed = sum(c - 1 for c in node_counts.values() if c > 1)
     print(
-        f"      collision: {collapsed} со-узловых аптек на {len(shared)} общих узлах; "
-        f"уникальных узлов={len(node_counts)}/{len(ph_nodes)} аптек"
+        f"      collision: {collapsed} co-located pharmacies on {len(shared)} shared nodes; "
+        f"unique nodes={len(node_counts)}/{len(ph_nodes)} pharmacies"
     )
     if depot_node in node_counts:
-        print("      депо делит узел с аптекой, но остаётся ОТДЕЛЬНЫМ стопом (stop 0)")
+        print("      the depot shares a node with a pharmacy but stays a SEPARATE stop (stop 0)")
 
-    # ИНДЕКСАЦИЯ ПО СТОПАМ (не по set(nearest_nodes)): депо + каждая аптека = своя строка.
-    # Со-узловые стопы сохраняются отдельно (Δ≈0 между ними), матрица НЕ схлопывается.
-    stop_nodes = [depot_node, *ph_nodes]  # длина = 1 + n_pharmacies
+    # INDEXED BY STOP (not by set(nearest_nodes)): the depot and every pharmacy get their own row.
+    # Co-located stops are kept apart (Δ≈0 between them), the matrix is NOT collapsed.
+    stop_nodes = [depot_node, *ph_nodes]  # length = 1 + n_pharmacies
 
-    print(f"[5/5] all-pairs матрицы по стопам ({len(stop_nodes)}×{len(stop_nodes)}) …")
+    print(f"[5/5] all-pairs matrices per stop ({len(stop_nodes)}×{len(stop_nodes)}) …")
     time_m, dist_m = osm.build_matrices(g, stop_nodes)
-    assert time_m.shape == (1 + n_ph, 1 + n_ph), "матрица схлопнута — индексируется не по стопам!"
+    assert time_m.shape == (1 + n_ph, 1 + n_ph), "matrix collapsed — not indexed by stop!"
 
     depot_row = {
         "stop": 0,
@@ -99,7 +99,7 @@ def main() -> None:
     }
     out = Path("data/snapshots") / f"augsburg_{date}"
     snapshot.save_snapshot(out, g, stop_nodes, time_m, dist_m, nodes_df, meta)
-    print(f"\n✅ снапшот → {out}")
+    print(f"\n✅ snapshot → {out}")
     print(json.dumps(meta, ensure_ascii=False, indent=2))
 
 

@@ -1,16 +1,16 @@
-"""Phase 6b Шаг 3 — инференс-поиск (БЕЗ обучения, только decode). Чекпойнт: congestion-best.
+"""Phase 6b Step 3 — inference search (NO training, decode only). Checkpoint: congestion-best.
 
-Три замера (все с полным provenance → results/search_summary.json):
-  1) K-таблица: sample-K take-best vs (качество, латентность) при K=16/64/128/256 (де-риск
-     латентности — она env-bound: батч-декод держит нейронку ~плоской по K, растёт K× env.step);
-  2) static: full-62 / seeds 0–9 / free-flow — sample-K take-best И PortfolioPlanner vs OR-Tools
-     (611€) и greedy (825€). Congestion-веса на free-flow-инстансах: channel-1 mult≡1,
-     node_congestion=0 → congestion-фичи нейтральны, политика работает как обычная;
-  3) dynamic: харнесс 0004 (`run_dynamic.run`) с PortfolioPlanner → RL(портфель) vs greedy vs
-     OR-Tools. Гарантия ПО ПОСТРОЕНИЮ: RL ≤ greedy на КАЖДОМ событии (счётчик нарушений=0 +
-     худшая per-event дельта) + латентность < 1с.
+Three measurements (all with full provenance → results/search_summary.json):
+  1) K table: sample-K take-best vs (quality, latency) at K=16/64/128/256 (de-risking latency —
+     it is env-bound: batched decode keeps the network ~flat in K, the growth is K× env.step);
+  2) static: full-62 / seeds 0–9 / free-flow — sample-K take-best AND PortfolioPlanner vs OR-Tools
+     (611€) and greedy (825€). Congestion weights on free-flow instances: channel-1 mult≡1,
+     node_congestion=0 → the congestion features are neutral and the policy behaves as usual;
+  3) dynamic: the 0004 harness (`run_dynamic.run`) with PortfolioPlanner → RL(portfolio) vs greedy
+     vs OR-Tools. Guarantee BY CONSTRUCTION: RL ≤ greedy at EVERY event (violation counter=0 +
+     worst per-event delta) + latency < 1s.
 
-Запуск: python scripts/run_search.py [--ckpt PATH] [--seeds N] [--k-static K] [--k-dyn K]
+Run: python scripts/run_search.py [--ckpt PATH] [--seeds N] [--k-static K] [--k-dyn K]
         [--temp T] [--events E] [--deadline S] [--out PATH] [--skip-ktable]
 """
 
@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-sys.path.insert(0, str(Path(__file__).parent))  # переиспользуем харнесс run_dynamic
+sys.path.insert(0, str(Path(__file__).parent))  # reuse the run_dynamic harness
 import run_dynamic as rd  # noqa: E402
 
 from logistics_rl_gnn.baselines.greedy import greedy_routes  # noqa: E402
@@ -46,7 +46,7 @@ def _greedy_cost(inst, travel, fleet):
 
 
 def _sample_take_best(pol, inst, travel, fleet, K, temp, *, seed=0):
-    """sample-K take-best (только стохастические роллауты) + латентность батч-декода."""
+    """sample-K take-best (stochastic rollouts only) + batched-decode latency."""
     envs = [make_dynamic_env(inst, travel=travel, fleet_size=fleet) for _ in range(K)]
     envs[0].reset(seed=0)
     enc = pol.encode(envs[0])
@@ -58,11 +58,11 @@ def _sample_take_best(pol, inst, travel, fleet, K, temp, *, seed=0):
 
 
 def k_table(pol, seeds, temp, ks=(16, 64, 128, 256)) -> dict:
-    """sample-K take-best на full-62 free-flow: качество (vs greedy) и латентность по K."""
+    """sample-K take-best on full-62 free-flow: quality (vs greedy) and latency by K."""
     insts = [im.generate_instance(seed=int(s)) for s in seeds]
     gd = [_greedy_cost(i, None, im.FLEET_SIZE) for i in insts]
-    print("\n=== K-таблица (sample-K take-best, full-62 free-flow, ср. по сидам) ===")
-    print(f"{'K':>5} | {'best,€':>8} | {'vs greedy':>9} | {'лат,мс (медиана)':>16}")
+    print("\n=== K table (sample-K take-best, full-62 free-flow, mean over seeds) ===")
+    print(f"{'K':>5} | {'best,€':>8} | {'vs greedy':>9} | {'lat,ms (median)':>16}")
     print("-" * 48)
     gd_mean = float(np.mean(gd))
     rows = []
@@ -77,12 +77,12 @@ def k_table(pol, seeds, temp, ks=(16, 64, 128, 256)) -> dict:
         gap = cost / gd_mean - 1
         print(f"{K:5d} | {cost:8.1f} | {gap:+8.1%} | {lat:16.1f}")
         rows.append({"K": K, "cost_eur": cost, "gap_greedy": gap, "latency_ms_median": lat})
-    print("латентность ~линейна по K (env-bound: K× env.step/шаг; нейронка батчится → плоская).")
+    print("latency ~linear in K (env-bound: K× env.step per step; the network batches → flat).")
     return {"greedy_mean_eur": gd_mean, "rows": rows}
 
 
 def static_gap(pol, planner, seeds, K, temp) -> dict:
-    """full-62 free-flow: sample-K take-best И portfolio vs OR-Tools 611€ / greedy 825€."""
+    """full-62 free-flow: sample-K take-best AND portfolio vs OR-Tools 611€ / greedy 825€."""
     bl = json.loads(Path("results/baselines.json").read_text())
     g_ref = -bl["greedy"]["agg"]["reward"]["mean"]
     o_ref = -bl["ortools"]["agg"]["reward"]["mean"]
@@ -101,7 +101,7 @@ def static_gap(pol, planner, seeds, K, temp) -> dict:
         f"(vs greedy {sk_m / g_ref - 1:+.1%}, vs OR {sk_m / o_ref - 1:+.1%})"
     )
     print(
-        f"  PortfolioPlanner    : {port_m:7.1f} €  ← лучший  "
+        f"  PortfolioPlanner    : {port_m:7.1f} €  ← best  "
         f"(vs greedy {port_m / g_ref - 1:+.1%}, vs OR {port_m / o_ref - 1:+.1%})"
     )
     return {
@@ -118,10 +118,10 @@ def static_gap(pol, planner, seeds, K, temp) -> dict:
 
 
 def _guarantee(records, eps=1e-6) -> dict:
-    """RL(портфель) vs greedy per-event: нарушений 0 (гарантия), худшая/медиана дельта."""
+    """RL(portfolio) vs greedy per event: 0 violations (the guarantee), worst/median delta."""
     rl = {(r["seed"], r["at_min"]): -r["reward"] for r in records if r["method"] == "rl"}
     gr = {(r["seed"], r["at_min"]): -r["reward"] for r in records if r["method"] == "greedy"}
-    d = [rl[k] - gr[k] for k in rl if k in gr]  # €; ≤0 = не хуже greedy
+    d = [rl[k] - gr[k] for k in rl if k in gr]  # €; ≤0 = no worse than greedy
     return {
         "n_events": len(d),
         "violations": int(sum(x > eps for x in d)),
@@ -131,7 +131,7 @@ def _guarantee(records, eps=1e-6) -> dict:
 
 
 def dynamic_table(planner, seeds, *, deadline_s, n_events, ckpt) -> dict:
-    """Харнесс 0004 с портфелем → таблица + гарантия per-event + латентность."""
+    """The 0004 harness with the portfolio → table + per-event guarantee + latency."""
     res = rd.run(
         list(seeds), deadline_s=deadline_s, n_events=n_events, ckpt=ckpt, rl_planner=planner
     )
@@ -139,21 +139,21 @@ def dynamic_table(planner, seeds, *, deadline_s, n_events, ckpt) -> dict:
     rd._print_table(agg)
     g = _guarantee(res["records"])
     print(
-        f"ГАРАНТИЯ RL≤greedy: нарушений {g['violations']}/{g['n_events']} "
-        f"(худшая Δ {g['worst_delta_eur']:+.2f}€, медиана {g['median_delta_eur']:+.2f}€) | "
-        f"латентность портфеля {agg['rl']['latency_ms_median']:.0f}мс "
-        f"({'<1с ✓' if agg['rl']['latency_ms_median'] < 1000 else '≥1с ✗'})"
+        f"GUARANTEE RL≤greedy: violations {g['violations']}/{g['n_events']} "
+        f"(worst Δ {g['worst_delta_eur']:+.2f}€, median {g['median_delta_eur']:+.2f}€) | "
+        f"portfolio latency {agg['rl']['latency_ms_median']:.0f}ms "
+        f"({'<1s ✓' if agg['rl']['latency_ms_median'] < 1000 else '≥1s ✗'})"
     )
     return {"aggregates": agg, "guarantee": g, "n_records": len(res["records"])}
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Phase 6b Шаг 3 — инференс-поиск (portfolio)")
+    ap = argparse.ArgumentParser(description="Phase 6b Step 3 — inference search (portfolio)")
     ap.add_argument("--ckpt", type=str, default=str(_CKPT))
     ap.add_argument("--seeds", type=int, default=10, help="static: seeds 0..N-1")
     ap.add_argument("--dyn-seeds", type=int, default=5, help="dynamic: seeds 0..N-1")
     ap.add_argument("--k-static", type=int, default=128)
-    ap.add_argument("--k-dyn", type=int, default=32, help="малый K → латентность < 1с")
+    ap.add_argument("--k-dyn", type=int, default=32, help="small K → latency < 1s")
     ap.add_argument("--rl-starts", type=int, default=16)
     ap.add_argument("--temp", type=float, default=1.0)
     ap.add_argument("--events", type=int, default=6)
@@ -198,12 +198,13 @@ def main() -> None:
         "k_table": kt,
         "static": stat,
         "dynamic": dyn,
-        "note": "БЕЗ обучения — только decode. Гарантия RL≤greedy = greedy-кандидат в портфеле "
-        "байт-идентичен методу greedy (тот же instance+travel+fleet+scorer). Static — free-flow "
-        "(congestion-фичи нейтральны). Веса вне git (запрет №1); число = seed+config+sha+версии.",
+        "note": "NO training — decode only. The RL≤greedy guarantee = the greedy candidate in the "
+        "portfolio is byte-identical to the greedy method (same instance+travel+fleet+scorer). "
+        "Static — free-flow (congestion features neutral). Weights outside git (#1); the number = "
+        "seed+config+sha+versions.",
     }
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-    print(f"\nсводка → {out}")
+    print(f"\nsummary → {out}")
 
 
 if __name__ == "__main__":

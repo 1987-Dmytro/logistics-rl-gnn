@@ -1,13 +1,14 @@
-"""Phase 8 — один seeded eval СИСТЕМЫ (полир. портфель) для ПОЛНОГО вектора метрик.
+"""Phase 8 — one seeded eval of the SYSTEM (polished portfolio) for the FULL metric vector.
 
-Durable json ([[0009]] polish_summary) хранил только COST системы; для «Было/Стало»-таблицы нужны
-также пробег/время/машины. Прогоняем полир. портфель ОДИН раз на сидах 0–9 (== baselines/0009,
-full-62, free-flow), пишем полный вектор в results/system_metrics.json с provenance.
+The durable json ([[0009]] polish_summary) stored only the system COST; the before/after table also
+needs distance/time/vehicles. We run the polished portfolio ONCE on seeds 0–9 (== baselines/0009,
+full-62, free-flow) and write the full vector into results/system_metrics.json with provenance.
 
-**ПАРИТИ-СТРАЖ:** агрегатный cost ОБЯЗАН совпасть с durable 631.6€ (0009 port_pol) — иначе это НЕ
-та система (assert-ошибка, не тихий разъезд). Не заменяет decision 0009: воспроизводит его число +
-добирает незалогированные метрики. Детерминирован (greedy/multistart/sample_k seed=0; polish до
-сходимости). Запуск: python scripts/eval_system.py [--seeds N] [--budget-ms MS]
+**PARITY GUARD:** the aggregate cost MUST match the durable 631.6€ (0009 port_pol) — otherwise this
+is NOT that system (an assert error, not a silent drift). It does not replace decision 0009: it
+reproduces its number and adds the metrics that were never logged. Deterministic (greedy/multistart/
+sample_k seed=0; polish to convergence).
+Run: python scripts/eval_system.py [--seeds N] [--budget-ms MS]
 """
 
 from __future__ import annotations
@@ -40,27 +41,27 @@ _OUT = Path("results/system_metrics.json")
 _CFG = CostConfig()
 _FLEET = im.FLEET_SIZE
 _Q = ("distance_km", "time_min", "vehicles_used", "on_time_pct", "unserved")
-_DURABLE_COST_0009 = 631.6212305905019  # port_pol из polish_summary.json — якорь парити
+_DURABLE_COST_0009 = 631.6212305905019  # port_pol from polish_summary.json — the parity anchor
 
 
 def _env(inst):
-    return make_dynamic_env(inst, travel=None)  # K/Q из инстанса (сценарий → meta, дефолт → 8×80)
+    return make_dynamic_env(inst, travel=None)  # K/Q from the instance (scenario → meta, else 8×80)
 
 
 def system_routes(pol, inst, *, budget_ms, k_samples, temp, rl_starts, report=None):
-    """Полир. портфель: best-по-cost из {greedy, RL-multi, sample-K}, каждый polish до сходимости.
+    """Polished portfolio: best-by-cost of {greedy, RL-multi, sample-K}, each polished to the end.
 
-    Идентично отбору port_pol в run_polish.static_polish (0009), но возвращает МАРШРУТЫ победителя
-    (для полного вектора метрик), а не только cost.
+    Identical to the port_pol selection in run_polish.static_polish (0009), but it returns the
+    winner's ROUTES (for the full metric vector) rather than just the cost.
 
-    pol=None → ablation `--no-model`: RL-кандидаты не порождаются (портфель = greedy+polish).
-    report (опц. dict) наполняется таблицей кандидатов: rows/chosen/cost_model/cost_nomodel/
-    rl_mean. Здесь polish получают ВСЕ кандидаты → «без модели» = polished greedy, точный
-    контрфактуал того же прогона (в отличие от re-plan, где polish берёт лишь топ-M)."""
+    pol=None → ablation `--no-model`: RL candidates are not produced (portfolio = greedy+polish).
+    report (optional dict) is filled with the candidate table: rows/chosen/cost_model/cost_nomodel/
+    rl_mean. Here EVERY candidate gets polish → "without the model" = polished greedy, an exact
+    counterfactual of the same run (unlike re-plan, where polish only reaches the top-M)."""
     fleet, cap = im.fleet_of(inst)
     labels, cands = ["greedy"], [greedy_routes(env=_env(inst))]
     if pol is not None:
-        _, rl = multistart_greedy(pol, _env(inst), rl_starts)  # None при отсутствии feasible старта
+        _, rl = multistart_greedy(pol, _env(inst), rl_starts)  # None when no feasible start exists
         envs = [_env(inst) for _ in range(k_samples)]
         envs[0].reset(seed=0)
         sk = pol.sample_k(envs, pol.encode(envs[0]), temperature=temp, seed=0)
@@ -77,9 +78,9 @@ def system_routes(pol, inst, *, budget_ms, k_samples, temp, rl_starts, report=No
     if report is not None:
         raw = [(i, -evaluate_solution(c, inst, _CFG)["reward"]) for i, c in enumerate(cands)]
         rows = candidate_rows(labels, raw)
-        for r in rows:  # polish здесь получает КАЖДЫЙ кандидат (в отличие от re-plan)
+        for r in rows:  # here EVERY candidate gets polish (unlike re-plan)
             r["polished"] = polished[labels.index(r["source"])][1]
-        if pol is not None:  # sample-K: n/mean по ВСЕМ K роллаутам, не по одному победителю
+        if pol is not None:  # sample-K: n/mean over ALL K rollouts, not over the single winner
             for r in rows:
                 if r["source"] == "sample":
                     r.update(n=len(sk_scores), cost=min(c for _, c in sk_scores),
@@ -93,14 +94,14 @@ def system_routes(pol, inst, *, budget_ms, k_samples, temp, rl_starts, report=No
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Phase 8 — полный вектор метрик системы (парити 0009)")
+    ap = argparse.ArgumentParser(description="Phase 8 — full system metric vector (0009 parity)")
     ap.add_argument("--ckpt", default=str(_CKPT))
     ap.add_argument("--seeds", type=int, default=10)
-    ap.add_argument("--budget-ms", type=float, default=30000.0, help="polish до сходимости (0009)")
+    ap.add_argument("--budget-ms", type=float, default=30000.0, help="polish to convergence (0009)")
     ap.add_argument("--k-samples", type=int, default=128)
     ap.add_argument("--rl-starts", type=int, default=16)
     ap.add_argument("--temp", type=float, default=1.0)
-    ap.add_argument("--tol", type=float, default=2.0, help="парити-допуск к 631.6€ (wall-clock)")
+    ap.add_argument("--tol", type=float, default=2.0, help="parity tolerance to 631.6€ (wallclock)")
     ap.add_argument("--out", default=str(_OUT))
     args = ap.parse_args()
 
@@ -121,15 +122,15 @@ def main() -> None:
               f"time {q['time_min']:6.0f}min veh {int(q['vehicles_used'])}")
     mean = {k: float(np.mean(v)) for k, v in acc.items()}
     cost = -mean["reward"]
-    # ПАРИТИ-СТРАЖ: cost обязан совпасть с durable 631.6 (иначе НЕ та система)
+    # PARITY GUARD: cost must match the durable 631.6 (otherwise it is NOT that system)
     assert abs(cost - _DURABLE_COST_0009) < args.tol, (
-        f"ПАРИТИ FAIL: cost {cost:.2f}€ != durable 0009 {_DURABLE_COST_0009:.2f}€ "
-        f"(|Δ|={abs(cost - _DURABLE_COST_0009):.2f} > {args.tol}) — НЕ та система или budget-bound"
+        f"PARITY FAIL: cost {cost:.2f}€ != durable 0009 {_DURABLE_COST_0009:.2f}€ "
+        f"(|Δ|={abs(cost - _DURABLE_COST_0009):.2f} > {args.tol}) — wrong system or budget-bound"
     )
     out = {
         "phase": "8-system-full-vector",
-        "note": "полир. портфель (== [[0009]]), ПОЛНЫЙ вектор; cost парити с 0009 631.6€. "
-        "seeds 0-9 full-62 free-flow. Один seeded eval (не заменяет 0009, добирает метрики).",
+        "note": "polished portfolio (== [[0009]]), FULL vector; cost parity with 0009 631.6€. "
+        "seeds 0-9 full-62 free-flow. One seeded eval (does not replace 0009, adds metrics).",
         "config": {
             "ckpt": str(ckpt), "seeds": list(range(args.seeds)), "budget_ms": args.budget_ms,
             "k_samples": args.k_samples, "rl_starts": args.rl_starts, "temperature": args.temp,
@@ -137,8 +138,8 @@ def main() -> None:
         },
         "provenance": rd._provenance(ckpt),
         "durable_cost_anchor_0009": _DURABLE_COST_0009,
-        # per-seed cost для ПАРНОГО сравнения (те же seeds, что OR-Tools в timematch → σ инстанса
-        # сокращается; median-Δ + wins, как 0010). mean(per_seed) == means.cost_eur (парити).
+        # per-seed cost for a PAIRED comparison (the same seeds as OR-Tools in timematch → the
+        # instance σ cancels; median-Δ + wins, as in 0010). mean(per_seed) == means.cost_eur.
         "per_seed_cost_eur": [float(-r) for r in acc["reward"]],
         "means": {
             "cost_eur": cost, "distance_km": mean["distance_km"], "time_min": mean["time_min"],
@@ -147,7 +148,7 @@ def main() -> None:
         },
     }
     Path(args.out).write_text(json.dumps(out, ensure_ascii=False, indent=2))
-    print(f"\nСИСТЕМА (полир. портфель, seeds 0-9): cost {cost:.1f}€ (парити 0009 631.6 ✓) "
+    print(f"\nSYSTEM (polished portfolio, seeds 0-9): cost {cost:.1f}€ (0009 parity 631.6 ✓) "
           f"dist {mean['distance_km']:.1f}km time {mean['time_min']:.0f}min "
           f"veh {mean['vehicles_used']:.1f}")
     print(f"→ {args.out}")

@@ -1,12 +1,13 @@
-"""Phase 8 — аддитивное обогащение снапшота именами/адресами аптек (для route sheet).
+"""Phase 8 — additive enrichment of the snapshot with pharmacy names/addresses (for the sheet).
 
-nodes.parquet несёт координаты, но НЕ имена. Тянем POI аптек (`features_from_place`, ТЕ ЖЕ теги, что
-build_snapshot) → матч к снапшот-аптекам по КООРДИНАТЕ (representative_point, порог `--max-dist-m`)
-→ names.parquet (stop, name, addr, osm_id, dist_m). Матрицы/стопы/окна НЕ трогаем (парити 631.6€
-охраняется) — только meta.json += names_present. Требует сеть (Overpass). Route sheet без файла →
-фолбэк на stop-id (аддитивно, не ломает). Синтетику НЕ метим — данные РЕАЛЬНЫЕ (запрет №5).
+nodes.parquet carries coordinates but NOT names. We pull pharmacy POIs (`features_from_place`, THE
+SAME tags as build_snapshot) → match to snapshot pharmacies BY COORDINATE (representative_point,
+threshold `--max-dist-m`) → names.parquet (stop, name, addr, osm_id, dist_m). Matrices/stops/
+windows are untouched (the 631.6€ parity is protected) — only meta.json += names_present. Requires
+network (Overpass). No file → the route sheet falls back to stop-ids (additive, nothing breaks).
+Nothing is tagged synthetic — the data is REAL (prohibition #5).
 
-Запуск: python scripts/enrich_names.py [--snap DIR] [--max-dist-m 60]
+Run: python scripts/enrich_names.py [--snap DIR] [--max-dist-m 60]
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ def _haversine_m(lon1, lat1, lon2, lat2) -> float:
 
 
 def _addr(row) -> str | None:
-    """Склейка «Улица Дом, Индекс Город» из addr:*-тегов (что есть)."""
+    """Glue 'Street House, Postcode City' out of the addr:* tags (whichever exist)."""
     street = row.get("addr:street")
     house = row.get("addr:housenumber")
     city = row.get("addr:city")
@@ -55,12 +56,12 @@ def enrich(snap_dir: Path, *, max_dist_m: float) -> pd.DataFrame:
     nodes = pd.read_parquet(snap_dir / "nodes.parquet")
     ph = nodes[nodes.kind == "pharmacy"][["stop", "x", "y"]].reset_index(drop=True)
 
-    poi = osm.load_pharmacies(cfg.PLACE).reset_index()  # x=lon, y=lat + name/addr-теги
+    poi = osm.load_pharmacies(cfg.PLACE).reset_index()  # x=lon, y=lat + name/addr tags
     px, py = poi["x"].to_numpy(), poi["y"].to_numpy()
 
     rows = []
     for r in ph.itertuples(index=False):
-        # ближайший POI к снапшот-координате (repr. point совпадает, если геометрия не менялась)
+        # nearest POI to the snapshot coordinate (repr. point matches if geometry did not change)
         j, best = -1, float("inf")
         for k in range(len(poi)):
             d = _haversine_m(r.x, r.y, float(px[k]), float(py[k]))
@@ -80,14 +81,14 @@ def enrich(snap_dir: Path, *, max_dist_m: float) -> pd.DataFrame:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Phase 8 — имена аптек (аддитивно)")
-    ap.add_argument("--snap", default=None, help="каталог снапшота (по умолч. — последний)")
-    ap.add_argument("--max-dist-m", type=float, default=60.0, help="порог координатного матча, м")
+    ap = argparse.ArgumentParser(description="Phase 8 — pharmacy names (additive)")
+    ap.add_argument("--snap", default=None, help="snapshot directory (default — the latest)")
+    ap.add_argument("--max-dist-m", type=float, default=60.0, help="coordinate match threshold, m")
     args = ap.parse_args()
 
     snap = Path(args.snap) if args.snap else im._latest_snapshot_dir()
     if snap is None:
-        raise FileNotFoundError("нет снапшота — сначала `python scripts/build_snapshot.py`")
+        raise FileNotFoundError("no snapshot — run `python scripts/build_snapshot.py` first")
 
     df = enrich(snap, max_dist_m=args.max_dist_m)
     n_named = int(df["name"].notna().sum())
@@ -96,11 +97,11 @@ def main() -> None:
     meta_p = snap / "meta.json"
     meta = json.loads(meta_p.read_text(encoding="utf-8"))
     meta["names_present"] = True
-    meta["names_matched"] = n_named  # аддитивно; матрицы/стопы не тронуты
+    meta["names_matched"] = n_named  # additive; matrices/stops untouched
     meta_p.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    print(f"→ {snap / 'names.parquet'}  ({n_named}/{len(df)} аптек с именем, "
-          f"матч ≤ {args.max_dist_m:.0f} м)")
+    print(f"→ {snap / 'names.parquet'}  ({n_named}/{len(df)} pharmacies named, "
+          f"match ≤ {args.max_dist_m:.0f} m)")
     print(f"→ {meta_p}  (+names_present)")
 
 

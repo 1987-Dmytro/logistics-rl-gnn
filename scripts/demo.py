@@ -1,28 +1,28 @@
-"""scripts/demo.py — единая нарративная демонстрация системы (реюз, без новых депов/расчётов).
+"""scripts/demo.py — one narrative demonstration of the system (reuse, no new deps/computations).
 
     python scripts/demo.py [--seed 0] [--event traffic|breakdown|urgent] [--no-open]
                            [--scenario scenarios/friday_south.yaml] [--no-model]
 
-Проверяемость (Phase 9): на старте — ПРОВЕНАНС модели (путь + sha256 + дата обучения + решение);
-sha обязан совпасть с провенансом durable-сводки, иначе громкий останов (тихого фолбэка нет).
-Шаги [2/5] и [4/5] печатают ТАБЛИЦУ КАНДИДАТОВ портфеля (источник → cost → кто выбран → polish),
-`--no-model` гоняет тот же портфель БЕЗ RL-кандидатов и печатает вклад модели этого прогона.
-`--scenario` подменяет день/аптеки/флот/события (config.scenario); без флага — дефолтный вторник.
+Verifiability (Phase 9): at start — the model PROVENANCE (path + sha256 + training date + decision);
+the sha must match the durable summary's provenance, otherwise a loud stop (no silent fallback).
+Steps [2/5] and [4/5] print the portfolio CANDIDATE TABLE (source → cost → who won → polish),
+`--no-model` runs the same portfolio WITHOUT RL candidates and prints the model's contribution.
+`--scenario` swaps the day/pharmacies/fleet/events (config.scenario); without it a default Tuesday.
 
-5 шагов человеческим языком: утро → построение плана (парити с system_metrics) → событие (харнесс
-0004) → re-plan (сцена A/B/C: do-nothing vs OR-Tools vs система, живой замер + durable медианы) →
-итог дня. ВСЕ числа берутся из тех же scorer'ов (route_sheet.build_sheet / compare_replan) — статик
-free-flow (587.9€, полный день, карта #1) и динамик-congestion residual (карты #2/#3) — РАЗНЫЕ миры,
-НЕ смешиваются. Артефакты → demo_out/ (вне git), самоописательные имена:
+5 steps in plain language: morning → plan construction (parity with system_metrics) → event (the
+0004 harness) → re-plan (scene A/B/C: do-nothing vs OR-Tools vs the system, live timing + durable
+medians) → the day's outcome. ALL numbers come from the same scorers (route_sheet.build_sheet /
+compare_replan) — static free-flow (587.9€, the full day, map #1) and dynamic congestion residual
+(maps #2/#3) are DIFFERENT worlds and are never mixed. Artefacts → demo_out/ (outside git):
   1_morning_plan.html · route_sheet.md · 2_incident_no_replan.html · 3_incident_replan.html ·
-  compare.html (два iframe #2|#3 + таблица A/B/C — кадр для скринкаста).
-Хопы карт — реальными улицами (nx.shortest_path по graph.graphml, кэш путей); старый план на #3 —
-выключаемый пунктирный слой; зона инцидента подписана.
+  compare.html (two iframes #2|#3 + the A/B/C table — the frame for a screencast).
+Map hops follow real streets (nx.shortest_path over graph.graphml, path cache); the old plan on #3
+is a toggleable dashed layer; the incident zone is labelled.
 
-Реюз: eval_system.system_routes, route_sheet.{build_sheet,render_md,walk_route,_assign,
+Reuse: eval_system.system_routes, route_sheet.{build_sheet,render_md,walk_route,_assign,
 _match_labels}, env.events (event_stream/residual/served), replan.compare_replan + PortfolioPlanner
-(тот же механизм, что дал durable 689/2001 мс в polish_summary.json). Ничего нового не считаем;
-latency в шапках/таблице — durable медиана (запрет №4), живой wall-clock — только в логе шага 4.
+(the same mechanism that produced the durable 689/2001 ms in polish_summary.json). Nothing new is
+computed; the latency in headers/table is the durable median (#4), live wall-clock only in step 4.
 """
 
 from __future__ import annotations
@@ -62,16 +62,16 @@ from logistics_rl_gnn.replan.portfolio import SOURCE_RU, PortfolioPlanner  # noq
 _SNAP = Path("data/snapshots/augsburg_20260720")
 _SM = Path("results/system_metrics.json")
 _CFG = CostConfig()
-# durable медианы re-plan (polish_summary.json, dec-0009) — hardware-independent якоря
+# durable re-plan medians (polish_summary.json, dec-0009) — hardware-independent anchors
 _DUR = {"rl": 689, "greedy": 7, "ortools": 2001}
-_SPEEDUP = _DUR["ortools"] / _DUR["rl"]  # ×2.9 реакция система vs OR-Tools (durable)
-# заголовок сцены A/B/C по типу события (клок берётся из данных, не хардкод)
-# заголовок сцены: у traffic зависит от магнитуды (закрытие ≠ замедление — подпись не должна врать)
-_EVENT_TITLE = {"breakdown": "Ausfall — машина выбыла", "urgent": "Eilauftrag — срочный заказ"}
-# палитра машин (folium) — общая для всех карт демо
+_SPEEDUP = _DUR["ortools"] / _DUR["rl"]  # ×2.9 reaction, system vs OR-Tools (durable)
+# the A/B/C scene title by event kind (the clock comes from data, not hardcoded)
+# scene title: for traffic it depends on the magnitude (a closure ≠ a slowdown — no lying labels)
+_EVENT_TITLE = {"breakdown": "Ausfall — vehicle lost", "urgent": "Eilauftrag — urgent order"}
+# vehicle palette (folium) — shared by every demo map
 _PAL = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
-# файл чекпойнта → решение, где эти веса обучены (заявление проверяемо по репо). Ключ — ИМЯ файла:
-# путь могут дать и относительный, и абсолютный.
+# checkpoint file → the decision where these weights were trained (a claim checkable in the repo).
+# The key is the FILE NAME: the path may be given relative or absolute.
 _DECISION = {"policy_pomo_congestion.pt":
              "knowledge/decisions/0007-phase6b-congestion-training.md"}
 
@@ -84,23 +84,23 @@ def _step(k: int, title: str) -> None:
     say(f"\n[{k}/5] {title}")
 
 
-# ---------- провенанс модели (фальсифицируемость: те ли это веса) ----------
+# ---------- model provenance (falsifiability: are these the right weights) ----------
 
 
 def _training_summary(ckpt: Path) -> dict:
-    """Сводка ОБУЧЕНИЯ этих весов: провенанс указывает на ЭТОТ чекпойнт И есть дата (у сводок-
-    потребителей весов — ablation/polish/search — поля `date` нет, они не обучали).
+    """TRAINING summary of these weights: the provenance points at THIS checkpoint AND has a date
+    (summaries that only consume weights — ablation/polish/search — have no `date` field).
 
-    BEST-EFFORT: сводки вне git, их отсутствие/устаревание НЕ роняет демо. Жёсткая сверка — только
-    с той сводкой, из которой демо берёт durable-числа (system_metrics), см. check_model_provenance.
+    BEST-EFFORT: the summaries live outside git, their absence/staleness does NOT break the demo.
+    The hard check is only against the summary the demo takes its durable numbers from.
     """
-    for p in sorted(_SM.parent.glob("*_summary.json")):  # та же папка, что и durable-сводка
+    for p in sorted(_SM.parent.glob("*_summary.json")):  # the same folder as the durable summary
         try:
             d = json.loads(p.read_text())
         except (OSError, json.JSONDecodeError):
             continue
         rec = ((d.get("provenance") or {}).get("checkpoint") or {}).get("path")
-        # сверяем РАЗРЕШЁННЫЕ пути: в сводках путь относительный, вызвать демо могут с абсолютным
+        # compare RESOLVED paths: summaries store a relative path, the demo may be called absolute
         same = rec is not None and Path(rec).resolve() == Path(ckpt).resolve()
         if same and d.get("date"):
             return {**d, "_path": str(p)}
@@ -108,25 +108,25 @@ def _training_summary(ckpt: Path) -> dict:
 
 
 def check_model_provenance(ckpt: Path, sm: dict) -> dict:
-    """sha256 весов ОБЯЗАН совпасть с провенансом durable-сводки (под которым посчитаны числа).
+    """The weights' sha256 MUST match the provenance of the durable summary behind the numbers.
 
-    Нет файла / мисматч → SystemExit: у демо НЕТ тихого фолбэка (честный прогон без модели —
-    флаг `--no-model`). Возвращает поля баннера.
+    No file / a mismatch → SystemExit: the demo has NO silent fallback (an honest run without the
+    model is the `--no-model` flag). Returns the banner fields.
     """
     if not ckpt.exists():
         raise SystemExit(
-            f"НЕТ ВЕСОВ: {ckpt} (чекпойнты вне git — запрет №1). Демо НЕ подменяет модель тихо: "
-            f"верни чекпойнт (обучение train_pomo.py) или запусти `--no-model` — портфель без "
-            f"RL-кандидатов, честно помеченный в выводе."
+            f"NO WEIGHTS: {ckpt} (checkpoints live outside git — prohibition #1). The demo never "
+            f"swaps the model silently: restore the checkpoint (train_pomo.py) or run `--no-model` "
+            f"— a portfolio without RL candidates, honestly marked in the output."
         )
     sha = hashlib.sha256(ckpt.read_bytes()).hexdigest()
     want = ((sm.get("provenance") or {}).get("checkpoint") or {}).get("sha256_16")
     if not want:
-        raise SystemExit(f"{_SM}: нет provenance.checkpoint.sha256_16 — нечем проверить веса")
+        raise SystemExit(f"{_SM}: no provenance.checkpoint.sha256_16 — nothing to verify against")
     if sha[: len(want)] != want:
         raise SystemExit(
-            f"ПРОВЕНАНС-МИСМАТЧ: {ckpt} sha256={sha[:16]}…, а durable-числа {_SM} посчитаны на "
-            f"{want}… — это ДРУГИЕ веса, числа демо несопоставимы с таблицами README. Останов."
+            f"PROVENANCE MISMATCH: {ckpt} sha256={sha[:16]}…, while the durable numbers in {_SM} "
+            f"were computed on {want}… — DIFFERENT weights, the demo is incomparable. Stop."
         )
     tr = _training_summary(ckpt)
     return {"ckpt": str(ckpt), "sha256": sha, "sha256_16": sha[:16], "date": tr.get("date"),
@@ -135,31 +135,31 @@ def check_model_provenance(ckpt: Path, sm: dict) -> dict:
 
 
 def _banner(prov: dict | None, ckpt: Path) -> None:
-    """Шапка прогона: чем именно считаем (или что модель отключена флагом)."""
+    """Run header: what exactly we compute with (or that the model is disabled by a flag)."""
     say("─" * 96)
     if prov is None:
-        say(f"МОДЕЛЬ ОТКЛЮЧЕНА (--no-model): портфель БЕЗ RL-кандидатов; {ckpt} не загружается.")
+        say(f"MODEL DISABLED (--no-model): portfolio WITHOUT RL candidates; {ckpt} is not loaded.")
     else:
-        say(f"Модель:   {prov['ckpt']} · sha256 {prov['sha256_16']}… "
-            f"(== провенанс {_SM} ✓)")
-        say(f"Обучена:  {prov['date'] or 'н/д'} · {prov['phase'] or '—'} · "
-            f"сводка {prov['summary'] or 'н/д'}")
-        say(f"Решение:  {prov['decision'] or '—'}")
+        say(f"Model:    {prov['ckpt']} · sha256 {prov['sha256_16']}… "
+            f"(== provenance of {_SM} ✓)")
+        say(f"Trained:  {prov['date'] or 'n/a'} · {prov['phase'] or '—'} · "
+            f"summary {prov['summary'] or 'n/a'}")
+        say(f"Decision: {prov['decision'] or '—'}")
     say("─" * 96)
 
 
 def _print_candidates(rows: list, chosen: str, *, note: str = "") -> None:
-    """Таблица кандидатов портфеля: источник → сырой € (лучший/средний) → после polish → выбран.
+    """Portfolio candidate table: source → raw € (best/mean) → after polish → chosen.
 
-    polished = «—» означает «этот источник в polish-топ-M не попал» (re-plan полирует только топ-M),
-    а НЕ «polish не помог» — подставлять сюда сырую цену нельзя (сравнение перестанет быть честным).
+    polished = '—' means 'this source never reached the polish top-M' (re-plan polishes only top-M),
+    NOT 'polish did not help' — substituting the raw price here would make the comparison dishonest.
     """
     win = chosen.partition("+")[0]
-    say(f"      кандидаты портфеля{note}:")
-    say(f"        {'источник':<22}{'n':>4}{'лучший €':>11}{'средний €':>11}{'+polish €':>11}")
+    say(f"      portfolio candidates{note}:")
+    say(f"        {'source':<22}{'n':>4}{'best €':>11}{'mean €':>11}{'+polish €':>11}")
     for r in rows:
         pol = "—" if r["polished"] is None else f"{r['polished']:.1f}"
-        mark = "  ← выбран" if r["source"] == win else ""
+        mark = "  ← chosen" if r["source"] == win else ""
         say(f"        {SOURCE_RU.get(r['source'], r['source']):<22}{r['n']:>4}"
             f"{r['cost']:>11.1f}{r['mean']:>11.1f}{pol:>11}{mark}")
 
@@ -168,48 +168,48 @@ def _clock(base, minutes):
     return rs._clock(base, minutes)
 
 
-# ---------- событие (per-kind, из харнесса 0004) ----------
+# ---------- the event (per kind, from the 0004 harness) ----------
 
 
 def _in_zone(incidents, coord, abs_min) -> bool:
-    """Стоп в активной зоне ЛЮБОГО инцидента — по САМОЙ логике Incident (геометрию не дублируем)."""
+    """A stop inside the active zone of ANY incident — by Incident's own logic (no duplication)."""
     return any(inc.at_node(coord, abs_min) != 0.0 for inc in incidents)
 
 
 def _active(incidents, abs_min) -> list:
-    """Инциденты, АКТИВНЫЕ в этот момент (окно ещё не истекло) — проверка их же логикой (центр
-    зоны в зоне по определению). Иначе карта рисует давно рассосавшуюся пробку как живую."""
+    """Incidents ACTIVE at this moment (the window has not expired) — checked by their own logic
+    (a zone centre is inside the zone by definition). Else the map draws a long-gone jam as live."""
     return [inc for inc in incidents if inc.at_node(inc.center, abs_min) != 0.0]
 
 
 def _event_context(kind, ev, inst, state, veh_of, names, *, abs_min) -> dict:
-    """Человеческие факты события + затронутые стопы/машины. Числа/зона — из данных, не хардкод.
+    """Human-readable facts of the event + affected stops/vehicles. Numbers/zone from data.
 
-    abs_min — момент в АБСОЛЮТНОМ клоке congestion (= at_min + сдвиг диспетч-старта): по нему
-    Incident решает, активен ли он. Зона считается по ВСЕМ активным инцидентам (сценарий может
-    накопить несколько), заголовок — по событию-триггеру.
+    abs_min — the moment on the ABSOLUTE congestion clock (= at_min + dispatch-start shift): the
+    Incident decides by it whether it is active. The zone covers ALL active incidents (a scenario
+    accumulate several); the title follows the triggering event.
     """
     n = len(inst.demand)
     pending = [i for i in range(1, n) if i not in state.served]
     ctx = {"clock": _clock(inst.start_datetime, ev.at_min),
-           "incidents": _active(state.incidents, abs_min),  # только живые на момент события
+           "incidents": _active(state.incidents, abs_min),  # only those alive at the event
            "affected": [], "vehicles": set(), "drop_vehicle": None, "lines": []}
     if kind == "traffic":
         inc = ev.incident
-        factor = ("закрытие (∞)" if math.isinf(inc.magnitude)
-                  else f"замедление ×{1 + inc.magnitude:.1f}")
+        factor = ("closure (∞)" if math.isinf(inc.magnitude)
+                  else f"slowdown ×{1 + inc.magnitude:.1f}")
         epi = min(range(1, n), key=lambda i: abs(inst.coords[i][0] - inc.center[0])
                   + abs(inst.coords[i][1] - inc.center[1]))
         zone = [i for i in pending if _in_zone(ctx["incidents"], inst.coords[i], abs_min)]
         vehs = {veh_of[i] for i in zone if i in veh_of}
         ctx.update(affected=zone, vehicles=vehs)
-        more = (f" Активных зон сейчас: {len(ctx['incidents'])} (стопы считаем по всем)."
+        more = (f" Active zones right now: {len(ctx['incidents'])} (stops counted over all)."
                 if len(ctx["incidents"]) > 1 else "")
         ctx["lines"] = [
-            f"пробка/инцидент у аптеки «{rs._label(int(inst.snapshot_stops[epi]), names)}» "
-            f"(радиус {inc.radius_km:.1f} км, {factor}).{more}",
-            f"В зоне {len(zone)} недоставленных стопов, "
-            f"затронуты машины {sorted(vehs) or '—'}.",
+            f"jam/incident near pharmacy '{rs._label(int(inst.snapshot_stops[epi]), names)}' "
+            f"(radius {inc.radius_km:.1f} km, {factor}).{more}",
+            f"{len(zone)} undelivered stops are in the zone, "
+            f"vehicles affected: {sorted(vehs) or '—'}.",
         ]
     elif kind == "breakdown":
         by_veh: dict[int, list[int]] = {}
@@ -220,67 +220,67 @@ def _event_context(kind, ev, inst, state, veh_of, names, *, abs_min) -> dict:
         orphans = by_veh.get(drop, [])
         ctx.update(drop_vehicle=drop, affected=orphans, vehicles={drop} if drop else set())
         ctx["lines"] = [
-            f"машина {drop} выбыла из строя — {len(orphans)} стопов осиротело.",
-            "Флот −1; осиротевшие стопы уходят в общий пул на перераспределение.",
+            f"vehicle {drop} broke down — {len(orphans)} stops orphaned.",
+            "Fleet −1; the orphaned stops go back into the shared pool for reassignment.",
         ]
     else:  # urgent
         o = ev.order
         idx = o["idx"]
         ctx.update(affected=[idx], vehicles={veh_of.get(idx)} - {None})
         ctx["lines"] = [
-            f"срочный заказ: аптека «{rs._label(int(inst.snapshot_stops[idx]), names)}» — "
-            f"{o['demand']} боксов, узкое окно {o['delta_s'] / 60:.0f} мин.",
-            "Требует вставки в текущие маршруты — триггер re-plan.",
+            f"urgent order: pharmacy '{rs._label(int(inst.snapshot_stops[idx]), names)}' — "
+            f"{o['demand']} boxes, a narrow window of {o['delta_s'] / 60:.0f} min.",
+            "It must be inserted into the current routes — a re-plan trigger.",
         ]
     return ctx
 
 
 def _eur(v: float) -> str:
-    """€ для печати. ∞ = старый план проходит СКВОЗЬ закрытие (δ=∞) → физически непроезжаем;
-    это не артефакт форматирования, а цена бездействия: без re-plan план не исполним вовсе."""
+    """€ for printing. ∞ = the old plan runs THROUGH a closure (δ=∞) → physically impassable;
+    not a formatting artefact but the price of inaction: without a re-plan it cannot be executed."""
     return "∞ €" if not math.isfinite(v) else f"{v:.1f} €"
 
 
 def _gap_line(title: str, without, with_model, note: str = "") -> str:
-    """Строка вклада модели: «без модели X · с моделью Y → Δ (%)». None-сторона → честное «—»."""
+    """Model contribution line: 'without the model X · with it Y → Δ (%)'. A None side → '—'."""
     if without is None or with_model is None:
         have = ("—" if without is None and with_model is None else
-                f"без модели {without:.1f} €" if without is not None else
-                f"с моделью {with_model:.1f} €")
-        return f"        • {title}: {have} · вторая сторона не измерена{note}"
-    d = without - with_model  # > 0 → модель дешевле
+                f"without the model {without:.1f} €" if without is not None else
+                f"with the model {with_model:.1f} €")
+        return f"        • {title}: {have} · the other side was not measured{note}"
+    d = without - with_model  # > 0 → the model is cheaper
     pct = (100.0 * d / without) if without else 0.0
-    return (f"        • {title}: без модели {without:.1f} € · с моделью {with_model:.1f} € "
+    return (f"        • {title}: without the model {without:.1f} € · with it {with_model:.1f} € "
             f"→ {-d:+.1f} € ({-pct:+.1f} %){note}")
 
 
 def _print_contribution(plan_report, plan_out, *, anchor, use_model, budget_ms, seed,
                         replan_nomodel=None) -> dict:
-    """Вклад модели ЭТОГО прогона = портфель с RL-кандидатами vs он же без них.
+    """This run's model contribution = the portfolio with RL candidates vs the same without them.
 
-    План дня: обе стороны измерены в ОДНОМ прогоне и сопоставимы — `system_routes` даёт КАЖДОМУ
-    кандидату полный `budget_ms` polish'а, поэтому «без модели» здесь == polished greedy честного
-    `--no-model`-прогона (проверено: 640.6 € в обоих).
-    Re-plan: сторона «без модели» — ОТДЕЛЬНЫЙ портфель `PortfolioPlanner(None)` с тем же полным
-    polish-бюджетом (`replan_nomodel`). Взять greedy+polish из портфеля с моделью нельзя: там
-    бюджет делится на топ-M, а его цена входит в min → Δ была бы тождественно ≤ 0, и «модель
-    ухудшила» стало бы непечатаемым исходом.
-    Под `--no-model` «с моделью» для плана берём из durable per_seed-якоря того же инстанса и того
-    же budget_ms (кастомный сценарий → якоря нет, честное «не измерено»).
-    Знак: «+X €» = модель ДОРОЖЕ на X (вклад отрицательный), «−X €» = дешевле.
+    Day plan: both sides are measured in ONE run and are comparable — `system_routes` gives EVERY
+    candidate the full `budget_ms` of polish, so 'without the model' here == the polished greedy of
+    an honest `--no-model` run (verified: 640.6 € in both).
+    Re-plan: the 'without the model' side is a SEPARATE `PortfolioPlanner(None)` with the same full
+    polish budget (`replan_nomodel`). Taking greedy+polish out of the portfolio WITH the model is
+    not allowed: there the budget is split across the top-M and its price enters the min → Δ would
+    be identically ≤ 0 and 'the model made it worse' would be an unprintable outcome.
+    Under `--no-model` the 'with the model' side of the plan comes from the durable per_seed anchor
+    of the same instance and the same budget_ms (a custom scenario has no anchor → 'not measured').
+    Sign: '+X €' = the model is X DEARER (negative contribution), '−X €' = cheaper.
     """
     if use_model:
         plan_wo, plan_w, note = plan_report["cost_nomodel"], plan_report["cost_model"], ""
     else:
         plan_wo, plan_w = plan_report["cost_model"], anchor
-        note = (f"  (с моделью — durable per_seed[{seed}], тот же инстанс и budget "
-                f"{budget_ms:.0f} мс)" if anchor is not None
-                else "  (durable-якоря у сценария нет)")
+        note = (f"  (with the model — durable per_seed[{seed}], same instance and budget "
+                f"{budget_ms:.0f} ms)" if anchor is not None
+                else "  (the scenario has no durable anchor)")
     rep_wo = replan_nomodel if use_model else plan_out["cost"]
     rep_w = plan_out["cost"] if use_model else None
-    rep_note = "" if use_model else "  (сторона «с моделью» — прогон без флага)"
-    say("      Вклад модели этого прогона (портфель БЕЗ RL-кандидатов vs с ними):")
-    lines = [_gap_line("план дня", plan_wo, plan_w, note),
+    rep_note = "" if use_model else "  (the 'with the model' side — a run without the flag)"
+    say("      This run's model contribution (portfolio WITHOUT RL candidates vs with them):")
+    lines = [_gap_line("day plan", plan_wo, plan_w, note),
              _gap_line("re-plan  ", rep_wo, rep_w, rep_note)]
     for ln in lines:
         say(ln)
@@ -288,16 +288,16 @@ def _print_contribution(plan_report, plan_out, *, anchor, use_model, budget_ms, 
             "replan_without": rep_wo, "replan_with": rep_w}
 
 
-# ---------- «продолжить старый план» (контрфактуал без re-plan) ----------
+# ---------- 'continue the old plan' (the no-re-plan counterfactual) ----------
 
 
 def _continue_old_plan(exec_routes, state, *, idx, drop_vehicle, veh_of):
-    """Остаток старого плана как residual-решение: ГЕНУИННО оставшиеся стопы (not served) в
-    исходном порядке по машинам (контрфактуал «не перепланировали»). idx — residual-нумерация
-    (== residual_instance, ПЕРЕДаётся из вызова: единый источник, иначе рассинхром при urgent).
-    drop_vehicle (breakdown) — её стопы выпадают (осиротели). urgent-re-delivery (стоп обслужен,
-    новый спрос) в старый план НЕ входит → в контрфактуале остаётся unserved (честно: заказ без
-    re-plan не выполнен)."""
+    """The remainder of the old plan as a residual solution: GENUINELY remaining stops (not served)
+    in the original per-vehicle order (the 'we did not re-plan' counterfactual). idx — residual
+    numbering (== residual_instance, PASSED IN from the caller: one source, else urgent desyncs).
+    drop_vehicle (breakdown) — its stops fall out (orphaned). An urgent re-delivery (stop served,
+    new demand) is NOT part of the old plan → it stays unserved in the counterfactual (honestly:
+    without a re-plan the order is not fulfilled)."""
     pos = {full: k for k, full in enumerate(idx)}
     out = []
     for route in exec_routes:
@@ -309,18 +309,18 @@ def _continue_old_plan(exec_routes, state, *, idx, drop_vehicle, veh_of):
     return out
 
 
-# ---------- дорожная геометрия (реальные улицы, кэш путей) ----------
+# ---------- road geometry (real streets, path cache) ----------
 
 
 def _stop_to_node(inst) -> dict[int, int]:
-    """stop-индекс инстанса → OSM node_id в graph.graphml (через nodes.parquet, тот же снапшот)."""
+    """instance stop index → OSM node_id in graph.graphml (via nodes.parquet, the same snapshot)."""
     nd = pd.read_parquet(_SNAP / "nodes.parquet").set_index("stop")["node_id"].astype(int)
     return {n: int(nd[int(inst.snapshot_stops[n])]) for n in range(len(inst.demand))}
 
 
 def _road_latlon(graph, na: int, nb: int, cache: dict) -> list:
-    """Полилиния хопа na→nb реальными улицами (nx.shortest_path, weight=length) с кэшем. Fallback
-    (нет пути/узла) — прямая по КООРДИНАТАМ УЗЛОВ графа (все вершины остаются узлами графа)."""
+    """Polyline of the hop na→nb along real streets (nx.shortest_path, weight=length) with a cache.
+    Fallback (no path/node) — a straight line over GRAPH NODE coordinates (vertices stay nodes)."""
     key = (na, nb)
     if key not in cache:
         try:
@@ -333,7 +333,7 @@ def _road_latlon(graph, na: int, nb: int, cache: dict) -> list:
 
 
 def _route_polyline(route, stop2node, graph, cache) -> list:
-    """Весь маршрут [0,s1,…,0] → одна полилиния реальными улицами (без дубля узла на стыке)."""
+    """A whole route [0,s1,…,0] → one polyline along real streets (no duplicate node at joins)."""
     pts: list = []
     for a, b in zip(route, route[1:], strict=False):
         seg = _road_latlon(graph, stop2node[a], stop2node[b], cache)
@@ -350,21 +350,21 @@ def _num_icon(k: int, col: str):
         icon_size=(18, 18), icon_anchor=(9, 9))
 
 
-# ---------- карта демо (шапка + реальные улицы + слой старого плана + зона) ----------
+# ---------- demo map (header + real streets + old-plan layer + zone) ----------
 
 
 def _render_map(inst, primary, out: Path, *, graph, stop2node, cache, names, price, price_val,
                 title, caption, banner_color, incidents=(), old_routes=None, show_eta=False):
-    """Одна карта демо: floating-шапка (крупная цена + титул + what-you-see), депо, зона инцидента
-    (подписана), опц. выключаемый пунктирный слой «старый план», основной план сплошными реальными
-    улицами + пронумерованные стопы (popup: имя; ETA/окно только на #1 free-flow). price_val —
-    машиночитаемая цена в шапке (data-demo-price) для страж-теста «числа шапок == demo-выводу»."""
+    """One demo map: a floating header (large price + title + what-you-see), the depot, the incident
+    zone (labelled), an optional toggleable dashed 'old plan' layer, the main plan as solid real
+    streets + numbered stops (popup: name; ETA/window only on #1 free-flow). price_val — the
+    machine-readable header price (data-demo-price) for the guard test 'headers == demo output'."""
     import folium
 
     c = inst.coords
     base = inst.start_datetime
     m = folium.Map(location=[c[0][1], c[0][0]], zoom_start=12, tiles="cartodbpositron")
-    m.get_root().html.add_child(folium.Element(  # шапка; сдвигаем zoom-контролы из-под неё
+    m.get_root().html.add_child(folium.Element(  # header; push the zoom controls out from under it
         '<style>.leaflet-top{top:76px}</style>'
         f'<div style="position:fixed;top:0;left:0;right:0;z-index:9999;background:{banner_color};'
         'color:#fff;padding:8px 16px;font-family:system-ui,-apple-system,sans-serif;'
@@ -372,20 +372,20 @@ def _render_map(inst, primary, out: Path, *, graph, stop2node, cache, names, pri
         f'<span data-demo-price="{price_val:.6f}" style="font-size:22px;font-weight:800">{price}'
         f'</span><span style="font-size:15px;font-weight:600;margin-left:12px">{title}</span>'
         f'<div style="font-size:12px;opacity:.92;margin-top:2px">{caption}</div></div>'))
-    folium.Marker([c[0][1], c[0][0]], tooltip="Депо PHOENIX",
+    folium.Marker([c[0][1], c[0][0]], tooltip="PHOENIX depot",
                   icon=folium.Icon(color="red", icon="star")).add_to(m)
-    for incident in incidents:  # ВСЕ активные зоны красным + подпись (сценарий может дать 2+)
-        closed = math.isinf(incident.magnitude)  # закрытие vs замедление — подписи разные
-        tag, what = (("🚧 Sperrung", "закрытие") if closed
-                     else ("🚦 Stau", f"замедление ×{1 + incident.magnitude:.1f}"))
+    for incident in incidents:  # ALL active zones in red + a label (a scenario may give 2+)
+        closed = math.isinf(incident.magnitude)  # closure vs slowdown — different labels
+        tag, what = (("🚧 Sperrung", "closure") if closed
+                     else ("🚦 Stau", f"slowdown ×{1 + incident.magnitude:.1f}"))
         folium.Circle([incident.center[1], incident.center[0]], radius=incident.radius_km * 1000,
                       color="red", fill=True, fill_opacity=0.12, weight=2,
-                      tooltip=f"{what} (r={incident.radius_km:.1f} км)").add_to(m)
+                      tooltip=f"{what} (r={incident.radius_km:.1f} km)").add_to(m)
         folium.Marker([incident.center[1], incident.center[0]], icon=folium.DivIcon(
             html='<div style="font-size:11px;color:#c00;font-weight:700;white-space:nowrap;'
                  f'transform:translate(-50%,-24px)">{tag}</div>')).add_to(m)
-    if old_routes:  # старый план — выключаемый пунктирный слой (off)
-        fg = folium.FeatureGroup(name="старый план (без re-plan)", show=False)
+    if old_routes:  # the old plan — a toggleable dashed layer (off)
+        fg = folium.FeatureGroup(name="old plan (no re-plan)", show=False)
         for route in old_routes:
             if len(route) > 2:
                 folium.PolyLine(_route_polyline(route, stop2node, graph, cache), color="#777",
@@ -397,14 +397,14 @@ def _render_map(inst, primary, out: Path, *, graph, stop2node, cache, names, pri
             continue
         col = _PAL[v % len(_PAL)]
         folium.PolyLine(_route_polyline(route, stop2node, graph, cache), color=col, weight=4,
-                        opacity=0.9, tooltip=f"маш. {v + 1}").add_to(m)
+                        opacity=0.9, tooltip=f"veh. {v + 1}").add_to(m)
         stops, _ = rs.walk_route(route, inst)
         for k, s in enumerate(stops, start=1):
             eta = ""
             if show_eta:
-                eta = (f"<br>ETA {rs._clock(base, s['arr_min'])} · окно "
+                eta = (f"<br>ETA {rs._clock(base, s['arr_min'])} · window "
                        f"{rs._clock(base, s['e_min'])}–{rs._clock(base, s['l_min'])}")
-            popup = folium.Popup(f"<b>{k}. {rs._label(s['snap'], names)}</b><br>маш. {v + 1}{eta}",
+            popup = folium.Popup(f"<b>{k}. {rs._label(s['snap'], names)}</b><br>veh. {v + 1}{eta}",
                                  max_width=260)
             folium.Marker([c[s["n"]][1], c[s["n"]][0]], popup=popup,
                           icon=_num_icon(k, col)).add_to(m)
@@ -416,10 +416,10 @@ def _render_map(inst, primary, out: Path, *, graph, stop2node, cache, names, pri
 
 
 def _write_compare(out: Path, *, left: str, right: str, scene_title: str, rows: list,
-                   takeaway: str, right_caption: str = "C: наш re-plan за 0.7 с"):
-    """compare.html — кадр для скринкаста: общий заголовок «Дилемма диспетчера» + таблица A/B/C
-    (все три стоимости в ОДНОМ residual-мире + латентность) + два iframe (#2 слева | #3 справа,
-    одинаковый viewport). Чистый HTML, без новых депов; ссылки на соседние файлы относительные."""
+                   takeaway: str, right_caption: str = "C: our re-plan in 0.7 s"):
+    """compare.html — the screencast frame: a shared title 'The dispatcher's dilemma' + the A/B/C
+    table (all three costs in ONE residual world + latency) + two iframes (#2 left | #3 right, same
+    viewport). Plain HTML, no new deps; links to the neighbouring files are relative."""
     trs = "".join(
         f'<tr><td class="k">{k}</td><td>{lab}</td><td class="num">{cost}</td>'
         f'<td class="num">{lat}</td><td>{note}</td></tr>'
@@ -436,9 +436,9 @@ def _write_compare(out: Path, *, left: str, right: str, scene_title: str, rows: 
         ".maps{display:flex;gap:10px;padding:0 12px 14px}.maps figure{flex:1;margin:0}"
         ".maps figcaption{font-size:13px;font-weight:600;padding:4px 6px}"
         "iframe{width:100%;height:78vh;border:1px solid #ccc;border-radius:4px}")
-    # «реакция» — durable медианы (dec-0009), НЕ wall-clock этого прогона: подписано в шапке
-    thead = ("<tr><th></th><th>сценарий</th><th>стоимость (этот прогон)</th>"
-             "<th>реакция (durable медиана)</th><th>что это</th></tr>")
+    # 'reaction' — durable medians (dec-0009), NOT this run's wall-clock: stated in the header
+    thead = ("<tr><th></th><th>scenario</th><th>cost (this run)</th>"
+             "<th>reaction (durable median)</th><th>what it is</th></tr>")
     html = (
         f'<!doctype html><meta charset="utf-8"><title>{scene_title}</title>\n'
         f"<style>{css}</style>\n"
@@ -446,8 +446,8 @@ def _write_compare(out: Path, *, left: str, right: str, scene_title: str, rows: 
         f"<table>{thead}{trs}</table>\n"
         f'<p class="take">{takeaway}</p>\n'
         '<div class="maps">\n'
-        " <figure><figcaption>A: do-nothing — едем старым планом сквозь событие "
-        "(B, OR-Tools, — без карты)</figcaption>\n"
+        " <figure><figcaption>A: do-nothing — driving the old plan through the event "
+        "(B, OR-Tools, has no map)</figcaption>\n"
         f'  <iframe src="{left}" title="do-nothing"></iframe></figure>\n'
         f" <figure><figcaption>{right_caption}</figcaption>\n"
         f'  <iframe src="{right}" title="re-plan"></iframe></figure>\n'
@@ -456,7 +456,7 @@ def _write_compare(out: Path, *, left: str, right: str, scene_title: str, rows: 
     out.write_text(html, encoding="utf-8")
 
 
-# ---------- главный сценарий ----------
+# ---------- main scenario ----------
 
 
 def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
@@ -466,47 +466,47 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     sm = json.loads(_SM.read_text())
     cfg = sm["config"]
     ckpt = Path(cfg["ckpt"])
-    prov = check_model_provenance(ckpt, sm) if use_model else None  # мисматч/нет весов → SystemExit
+    prov = check_model_provenance(ckpt, sm) if use_model else None  # mismatch/no weights → exit
     _banner(prov, ckpt)
 
     torch.manual_seed(0)
     pol = rd._load_policy(ckpt) if use_model else None
     scen = None
     if scenario_path is not None:
-        from logistics_rl_gnn.config.scenario import load_scenario  # опц. депа (pyyaml)
+        from logistics_rl_gnn.config.scenario import load_scenario  # optional dep (pyyaml)
 
         scen = load_scenario(scenario_path, snapshot_dir=_SNAP, seed=seed)
-        inst, dow, anchor = scen.instance, scen.weekday, None  # durable-якоря у сценария нет
+        inst, dow, anchor = scen.instance, scen.weekday, None  # a scenario has no durable anchor
     else:
         inst = im.generate_instance(snapshot_dir=_SNAP, seed=seed)
         dow = im.DELIVERY_WEEKDAY
         anchor = float(sm["per_seed_cost_eur"][seed])
-    # парити-якорь применим ТОЛЬКО к тому же портфелю, что дал durable-числа: под --no-model
-    # (портфель без RL-кандидатов) прогон обязан отличаться — сверять с якорем нечего.
+    # the parity anchor applies ONLY to the portfolio that produced the durable numbers: under
+    # --no-model (a portfolio without RL candidates) the run must differ — nothing to compare.
     parity = anchor if use_model else None
     marks = ([scen.name] if scen is not None else []) + (
-        [] if use_model else ["--no-model (портфель без RL-кандидатов)"])
-    run_label = " · ".join(marks) or None  # чем этот прогон отличается от durable-прогона
+        [] if use_model else ["--no-model (portfolio without RL candidates)"])
+    run_label = " · ".join(marks) or None  # how this run differs from the durable one
     names = rs.load_names(_SNAP)
     base = inst.start_datetime
     n = len(inst.demand)
     fleet_k, fleet_q = im.fleet_of(inst)
-    off = im.dispatch_offset_min(inst)  # сдвиг congestion-часов, если смена стартует не в 08:00
+    off = im.dispatch_offset_min(inst)  # congestion hour shift when the shift does not start 08:00
 
-    # [1/5] утро
-    _step(1, f"Утро, {rs._WEEKDAY_RU[base.weekday()]} {base.strftime('%H:%M')}. "
-             f"Депо PHOENIX, {rs._DEPOT_ADDR}.")
+    # [1/5] morning
+    _step(1, f"Morning, {rs._WEEKDAY_NAMES[base.weekday()]} {base.strftime('%H:%M')}. "
+             f"PHOENIX depot, {rs._DEPOT_ADDR}.")
     if scen is not None:
-        say(f"      Сценарий: «{scen.name}» ({scen.path}) — кастомный день, durable-якоря нет.")
-        if scen.dropped_stops:  # закрыты по реальным opening_hours → в плане их НЕТ (говорим вслух)
+        say(f"      Scenario: '{scen.name}' ({scen.path}) — a custom day, no durable anchor.")
+        if scen.dropped_stops:  # closed per real opening_hours → NOT in the plan (say it aloud)
             shown = ", ".join(scen.label(s) for s in scen.dropped_stops[:6])
             more = len(scen.dropped_stops) - 6
-            say(f"      ⚠ закрыты в этот день и выпали из плана ({len(scen.dropped_stops)}): "
-                f"{shown}{f' и ещё {more}' if more > 0 else ''}")
-    say(f"      Заказы: {n - 1} аптек, {int(inst.demand.sum())} боксов. "
-        f"Флот K={fleet_k}, вместимость Q={fleet_q:.0f}, T_max={im.T_MAX_MIN / 60:.0f} ч.")
+            say(f"      ⚠ closed that day and dropped from the plan ({len(scen.dropped_stops)}): "
+                f"{shown}{f' and {more} more' if more > 0 else ''}")
+    say(f"      Orders: {n - 1} pharmacies, {int(inst.demand.sum())} boxes. "
+        f"Fleet K={fleet_k}, capacity Q={fleet_q:.0f}, T_max={im.T_MAX_MIN / 60:.0f} h.")
 
-    # граф Аугсбурга для дорожной геометрии карт (реальные улицы, кэш путей). Тот же снапшот.
+    # the Augsburg graph for map road geometry (real streets, path cache). The same snapshot.
     graph = ox.load_graphml(_SNAP / "graph.graphml")
     stop2node = _stop_to_node(inst)
     cache: dict = {}
@@ -517,96 +517,96 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     p_compare = out / "compare.html"
     files = [str(p_morning), str(p_sheet), str(p_noreplan), str(p_replan), str(p_compare)]
 
-    # [2/5] построение плана (СТАТИК free-flow — парити с system_metrics)
-    _step(2, "Построение плана… (portfolio + local-search polish)")
+    # [2/5] plan construction (STATIC free-flow — parity with system_metrics)
+    _step(2, "Building the plan… (portfolio + local-search polish)")
     plan_report: dict = {}
     routes = es.system_routes(pol, inst, budget_ms=cfg["budget_ms"], k_samples=cfg["k_samples"],
                               temp=cfg["temperature"], rl_starts=cfg["rl_starts"],
                               report=plan_report)
     _print_candidates(plan_report["rows"], plan_report["chosen"],
-                      note=" — план дня (единый scorer; polish получает КАЖДОГО кандидата)")
+                      note=" — the day plan (one scorer; EVERY candidate gets polish)")
     sheet = rs.build_sheet(routes, inst)
     q = evaluate_solution(routes, inst, _CFG)
     assert abs(sheet["cost_eur"] - (-q["reward"])) < 1e-6, "walk-cost != scorer"
     if parity is not None:
         assert abs(sheet["cost_eur"] - parity) < 0.5, (
-            f"ПАРИТИ FAIL: {sheet['cost_eur']:.2f}€ != per_seed[{seed}] {parity:.2f}€")
-    # страж сценарного флота: план НЕ вправе использовать больше машин, чем дал сценарий
+            f"PARITY FAIL: {sheet['cost_eur']:.2f}€ != per_seed[{seed}] {parity:.2f}€")
+    # scenario fleet guard: the plan may not use more vehicles than the scenario granted
     assert sheet["totals"]["vehicles_used"] <= fleet_k, (
-        f"ФЛОТ FAIL: план занял {sheet['totals']['vehicles_used']} машин при K={fleet_k}")
+        f"FLEET FAIL: the plan used {sheet['totals']['vehicles_used']} vehicles at K={fleet_k}")
     T = sheet["totals"]
     morning_cost = sheet["cost_eur"]
-    md = rs.render_md(sheet, inst, names, seed=seed, cost_anchor=parity,  # статик-only (dyn=None)
+    md = rs.render_md(sheet, inst, names, seed=seed, cost_anchor=parity,  # static-only (dyn=None)
                       scenario=run_label)
     p_sheet.write_text(md, encoding="utf-8")
-    anchor_note = (f"парити system_metrics per_seed[{seed}]" if parity is not None
-                   else f"прогон «{run_label}» — durable-якоря нет, число этого прогона")
+    anchor_note = (f"parity with system_metrics per_seed[{seed}]" if parity is not None
+                   else f"run '{run_label}' — no durable anchor, the number of this run")
     _render_map(inst, routes, p_morning, graph=graph, stop2node=stop2node, cache=cache, names=names,
                 price=f"{morning_cost:.1f} €", price_val=morning_cost,
-                title=f"Утренний план · {base.strftime('%H:%M')} · {n - 1} стопов",
-                caption=f"Статик free-flow, полный день ({anchor_note}). "
-                        "ДРУГОЙ мир, чем карты после события — напрямую не сравнивать.",
+                title=f"Morning plan · {base.strftime('%H:%M')} · {n - 1} stops",
+                caption=f"Static free-flow, the full day ({anchor_note}). "
+                        "A DIFFERENT world from the post-event maps — not directly comparable.",
                 banner_color="#2b5797", show_eta=True)
-    say(f"      → {T['vehicles_used']} машин, {T['km']:.1f} км, "
+    say(f"      → {T['vehicles_used']} vehicles, {T['km']:.1f} km, "
         f"on-time {T['on_time_pct']:.0f}% · **{morning_cost:.1f} €** "
-        + (f"(парити system_metrics per_seed[{seed}] ✓)" if parity is not None
-           else "(durable-якоря нет: кастомный прогон)"))
-    say(f"      → карта:  {p_morning}")
-    say(f"      → лист:   {p_sheet}")
+        + (f"(parity with system_metrics per_seed[{seed}] ✓)" if parity is not None
+           else "(no durable anchor: a custom run)"))
+    say(f"      → map:   {p_morning}")
+    say(f"      → sheet: {p_sheet}")
     if open_maps:
         webbrowser.open(p_morning.resolve().as_uri())
 
-    # --- динамик-мир (congestion): исполняемый план дня ---
-    # ВАЖНО (иначе легко прочесть неверно): «старый план» ниже — это ДИСПЕТЧЕРСКИЙ greedy-план под
-    # диурнал-congestion из харнесса 0004, а НЕ полированный план шага [2/5] (тот статик free-flow,
-    # другой мир; смешивать их нельзя). Так же строит его run_dynamic — на этом стоят durable-числа.
-    # Инциденты в исполняемый таймлайн не закладываются: кто успел обслужиться к событию, считается
-    # по диурналу (упрощение харнесса 0004 — то же и в durable-прогоне).
+    # --- the dynamic world (congestion): the executed plan of the day ---
+    # IMPORTANT (easy to misread): the 'old plan' below is the DISPATCHER's greedy plan under
+    # diurnal congestion from the 0004 harness, NOT the polished plan of step [2/5] (that one is
+    # static free-flow, another world; they must not be mixed). run_dynamic builds it the same way.
+    # Incidents are not baked into the executed timeline: who managed to be served by the event is
+    # computed on the diurnal (a simplification of harness 0004 — the same in the durable run).
     exec_travel = congestion_for(inst, dow=dow, offset_min=off)
     exec_routes = greedy_routes(env=make_dynamic_env(inst, travel=exec_travel))
-    if scen is not None:  # события сценария: применяем ВСЕ по порядку, триггер — последнее
+    if scen is not None:  # scenario events: apply ALL in order, the trigger is the last one
         if not scen.events:
-            raise SystemExit(f"в сценарии «{scen.name}» нет событий (нечего перепланировать)")
+            raise SystemExit(f"scenario '{scen.name}' has no events (nothing to re-plan)")
         evs = list(scen.events)
     else:
         ev = next((e for e in event_stream(seed, inst, dow) if e.kind == event_kind), None)
         if ev is None:
-            raise SystemExit(f"в потоке seed {seed} нет события '{event_kind}'")
+            raise SystemExit(f"the stream of seed {seed} has no '{event_kind}' event")
         evs = [ev]
     ev = evs[-1]
     event_kind = ev.kind
     state = DynamicState(inst, dow, now_min=float(ev.at_min))
     state.served = served_by(exec_routes, inst, exec_travel, ev.at_min)
-    for e in evs:  # состояние мира на момент триггера = все события, что уже случились
+    for e in evs:  # the world state at the trigger = every event that already happened
         e.apply(state)
     veh_of, _ = rs._assign(exec_routes, inst, exec_travel)
     ctx = _event_context(event_kind, ev, inst, state, veh_of, names, abs_min=ev.at_min + off)
-    title = (_EVENT_TITLE.get(event_kind) or  # traffic: закрытие или всего лишь замедление
-             ("Straßensperrung — перекрытие" if math.isinf(ev.incident.magnitude)
-              else "Stau — пробка"))
-    scene = f"{ctx['clock']} — {title}. Дилемма диспетчера"
+    title = (_EVENT_TITLE.get(event_kind) or  # traffic: a closure or merely a slowdown
+             ("Straßensperrung — road closed" if math.isinf(ev.incident.magnitude)
+              else "Stau — traffic jam"))
+    scene = f"{ctx['clock']} — {title}. The dispatcher's dilemma"
 
-    # [3/5] событие
-    _step(3, f"{ctx['clock']} — СОБЫТИЕ ({event_kind}):")
+    # [3/5] the event
+    _step(3, f"{ctx['clock']} — EVENT ({event_kind}):")
     if len(evs) > 1:
-        say("      цепочка событий сценария: "
+        say("      the scenario's event chain: "
             + " · ".join(f"{_clock(base, e.at_min)} {e.kind}" for e in evs))
     for line in ctx["lines"]:
         say(f"      {line}")
 
     pending = [i for i in range(1, n) if i not in state.served]
-    if not pending and not state.urgent:  # край: всё обслужено к моменту события
-        _step(4, "Re-plan не нужен — весь остаток уже обслужен.")
-        for p, ttl in ((p_noreplan, "без re-plan"), (p_replan, "после re-plan")):
+    if not pending and not state.urgent:  # edge case: everything served by the event
+        _step(4, "No re-plan needed — the whole remainder is already served.")
+        for p, ttl in ((p_noreplan, "no re-plan"), (p_replan, "after re-plan")):
             _render_map(inst, exec_routes, p, graph=graph, stop2node=stop2node, cache=cache,
                         names=names, price="0.0 €", price_val=0.0,
-                        title=f"{ctx['clock']} · остаток пуст ({ttl})",
-                        caption="Событие пришло на пустой остаток — план не менялся.",
+                        title=f"{ctx['clock']} · the remainder is empty ({ttl})",
+                        caption="The event hit an empty remainder — the plan did not change.",
                         banner_color="#555", incidents=ctx["incidents"])
         _write_compare(p_compare, left=p_noreplan.name, right=p_replan.name, scene_title=scene,
-                       rows=[("—", "остаток пуст", "0.0 €", "—", "план не менялся")],
-                       takeaway="Событие пришло на пустой остаток — re-plan не потребовался.")
-        _step(5, "Итог: событие пришло на пустой остаток, план не менялся.")
+                       rows=[("—", "remainder empty", "0.0 €", "—", "the plan did not change")],
+                       takeaway="The event hit an empty remainder — no re-plan was needed.")
+        _step(5, "Outcome: the event hit an empty remainder, the plan did not change.")
         return {"seed": seed, "event": event_kind, "static_cost": morning_cost,
                 "morning_cost": morning_cost, "n_served": len(state.served), "n_pending": 0,
                 "n_moved": 0, "cost_before": 0.0, "cost_after": 0.0, "or_cost": 0.0,
@@ -619,28 +619,28 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     travel = congestion_for(res, dow=dow, offset_min=state.now_min + off,
                             incidents=state.incidents)
 
-    # [4/5] re-plan: сцена A/B/C (do-nothing / OR-Tools / система) — тот же residual, compare_replan
-    _step(4, f"Re-plan из текущего состояния ({len(res.demand) - 1} стопов в остатке)…")
+    # [4/5] re-plan: scene A/B/C (do-nothing / OR-Tools / system) — same residual, compare_replan
+    _step(4, f"Re-plan from the current state ({len(res.demand) - 1} stops remaining)…")
     planner = PortfolioPlanner(pol, k_samples=16, temperature=1.0, rl_starts=8,
                                polish_budget_ms=400.0, polish_top_m=5)
     cmp = compare_replan(res, travel, pol, fleet_size=fleet, deadline_s=2,
                          rl_planner=planner, rl_reps=2, warmup=1)
-    plan_out = planner.plan(res, travel, fleet_size=fleet)  # маршруты для карт + таблица
+    plan_out = planner.plan(res, travel, fleet_size=fleet)  # routes for the maps + the table
     new = plan_out["routes"]
-    # сторона «БЕЗ модели» для re-plan — ОТДЕЛЬНЫЙ портфель без RL-кандидатов на ТОМ ЖЕ residual/
-    # travel/флоте и с ТЕМ ЖЕ ПОЛНЫМ polish-бюджетом. Брать greedy+polish из портфеля С моделью
-    # нельзя дважды: там бюджет делится на топ-M (greedy достаётся 1/M), а его цена ВХОДИТ в min →
-    # разница вышла бы тождественно ≤ 0, то есть «вклад модели» был бы нефальсифицируем.
-    # Вне timed-блока compare_replan → на печатаемую латентность не влияет.
+    # the 'WITHOUT the model' side of the re-plan — a SEPARATE portfolio without RL candidates on
+    # the SAME residual/travel/fleet and with the SAME FULL polish budget. Taking greedy+polish out
+    # of the portfolio WITH the model is not allowed: there the budget is split over the top-M
+    # (greedy gets 1/M) and its price ENTERS the min → the difference would be identically ≤ 0.
+    # Outside the timed block of compare_replan → it does not affect the printed latency.
     rep_nomodel = (PortfolioPlanner(None, polish_budget_ms=planner.polish_budget_ms,
                                     polish_top_m=planner.polish_top_m)
                    .plan(res, travel, fleet_size=fleet)["cost"] if use_model else None)
     _print_candidates(plan_out["rows"], plan_out["source"],
-                      note=f" — re-plan остатка (единый scorer; polish — только топ-"
-                           f"{planner.polish_top_m} по cost)")
+                      note=f" — re-plan of the remainder (one scorer; polish — only the top "
+                           f"{planner.polish_top_m} by cost)")
 
-    # residual→full маппинг: ТОЧНО как residual_instance.idx (для urgent он добавляет urgent-стоп
-    # даже если обслужен → иначе рассинхром нумерации). Реплицируем, не угадываем.
+    # residual→full mapping: EXACTLY as residual_instance.idx (for urgent it adds the urgent stop
+    # even when served → otherwise the numbering desyncs). Replicated, not guessed.
     res_pending = [i for i in range(1, n) if i not in state.served]
     for u in state.urgent:
         if u["idx"] not in res_pending:
@@ -653,101 +653,102 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     new_veh = {stop: labels[ri] for ri, rt in enumerate(new_routes_full) for stop in rt}
     n_moved = sum(1 for i in new_veh if i in veh_of and new_veh[i] != veh_of[i])
 
-    # стоимости — ВСЕ в одном residual+congestion мире (запрет №3: честный бейзлайн, тот же инстанс)
-    old_res = _continue_old_plan(exec_routes, state, idx=idx,  # idx — та же residual-нумерация
+    # costs — ALL in one residual+congestion world (#3: an honest baseline, the same instance)
+    old_res = _continue_old_plan(exec_routes, state, idx=idx,  # idx — the same residual numbering
                                  drop_vehicle=ctx["drop_vehicle"], veh_of=veh_of)
     cost_before = -evaluate_solution(old_res, res, _CFG, travel=travel)["reward"]  # do-nothing
-    # цена системы — ИМЕННО нарисованного плана `new`, а не отдельного rl-прогона внутри
-    # compare_replan (polish time-budgeted → мог разойтись с картой); из compare_replan — latency
+    # the system's price is that of the DRAWN plan `new`, not of a separate rl run inside
+    # compare_replan (polish is time-budgeted → it could drift from the map); latency comes from it
     q_new = evaluate_solution(new, res, _CFG, travel=travel)
-    cost_after = -q_new["reward"]            # система (портфель+polish) — тот же plan, что на #3
-    or_cost = -cmp["ortools"]["reward"]      # OR-Tools re-solve (тот же residual, deadline 2с)
+    cost_after = -q_new["reward"]            # the system (portfolio+polish) — the plan on #3
+    or_cost = -cmp["ortools"]["reward"]      # OR-Tools re-solve (same residual, deadline 2s)
     savings = cost_before - cost_after
     ot, uns = q_new["on_time_pct"], int(q_new["unserved"])
 
     def _lat(mk):
-        return f"{cmp[mk]['latency_ms']:.0f} мс этого прогона (durable медиана {_DUR[mk]} мс)"
+        return f"{cmp[mk]['latency_ms']:.0f} ms in this run (durable median {_DUR[mk]} ms)"
 
-    sys_label = ("система (портфель+polish)" if use_model
-                 else "портфель БЕЗ модели (greedy+polish, --no-model)")
-    # кто РЕАЛЬНО выиграл портфель (часто greedy+polish, а не RL-кандидат) — этим планом и
-    # подписаны карта #3 и строка C: атрибуция «GNN-старт» там, где победил greedy, была бы ложью
+    sys_label = ("system (portfolio+polish)" if use_model
+                 else "portfolio WITHOUT the model (greedy+polish, --no-model)")
+    # who REALLY won the portfolio (often greedy+polish, not an RL candidate) — map #3 and row C
+    # are labelled by that plan: attributing a 'GNN start' where greedy won would be a lie
     win_src = SOURCE_RU.get(plan_out["source"].partition("+")[0], plan_out["source"])
-    win_pol = " + polish" if "+polish" in plan_out["source"] else " (без polish)"
-    blocked = not math.isfinite(cost_before)  # старый план идёт сквозь закрытие → неисполним
-    dead = " — старый план идёт СКВОЗЬ закрытие: без re-plan он неисполним" if blocked else ""
-    say(f"      A do-nothing (едем старым планом): {_eur(cost_before)}{dead}")
+    win_pol = " + polish" if "+polish" in plan_out["source"] else " (no polish)"
+    blocked = not math.isfinite(cost_before)  # the old plan runs through a closure → impassable
+    dead = " — the old plan runs THROUGH the closure: it cannot run" if blocked else ""
+    say(f"      A do-nothing (drive the old plan): {_eur(cost_before)}{dead}")
     say(f"      B OR-Tools re-solve: {or_cost:.1f} € · {_lat('ortools')}")
     say(f"      C {sys_label}: {cost_after:.1f} € · {_lat('rl')}")
-    say(f"        greedy-контроль (латентность): {_lat('greedy')}")
-    say(f"      Перестроено: {n_moved} стопов перераспределены между машинами "
-        f"(метки по max-overlap).")
+    say(f"        greedy control (latency): {_lat('greedy')}")
+    say(f"      Rebuilt: {n_moved} stops reassigned between vehicles "
+        f"(labels matched by max overlap).")
 
-    # честный вердикт (dec-0012/0013): edge системы = СКОРОСТЬ реакции, НЕ качество. OR-Tools при
-    # полном бюджете (~30 с) обгоняет систему по качеству; здесь у OR лишь реакция-бюджет.
-    or_note = ("OR за реакция-бюджет ещё не сошёлся (нужны ~30 с)" if or_cost > cost_after else
-               "здесь OR по цене уже конкурентен; edge системы — скорость реакции")
+    # the honest verdict (dec-0012/0013): the system's edge is REACTION SPEED, NOT quality. At a
+    # full budget (~30 s) OR-Tools beats the system on quality; here OR only has a reaction budget.
+    or_note = ("OR has not converged in the reaction budget (~30 s needed)" if or_cost > cost_after
+               else
+               "here OR is already competitive on price; the edge is reaction speed")
     ablated = ("" if use_model else
-               " ВНИМАНИЕ: прогон БЕЗ модели (--no-model) — цена C получена портфелем без "
-               "RL-кандидатов, а durable-вердикт по латентности относится к полной системе.")
+               " NOTE: this run is WITHOUT the model (--no-model) — price C came from a portfolio "
+               "without RL candidates, while the durable latency verdict is about the full system.")
     takeaway = (
-        f"Стоимости (один residual-мир): бездействие {_eur(cost_before)}"
-        f"{' (маршрут перекрыт)' if blocked else ''} · OR-Tools@~2 с {or_cost:.1f} € · "
-        f"{'система@0.7 с' if use_model else 'портфель без модели'} {cost_after:.1f} €. "
-        f"Ценность системы — СКОРОСТЬ реакции "
-        f"(×{_SPEEDUP:.1f} к OR-Tools по latency), НЕ качество: при полном бюджете (~30 с) OR "
-        f"обгоняет систему по качеству (durable-вердикт). {or_note}.{ablated}")
+        f"Costs (one residual world): inaction {_eur(cost_before)}"
+        f"{' (route blocked)' if blocked else ''} · OR-Tools@~2 s {or_cost:.1f} € · "
+        f"{'system@0.7 s' if use_model else 'portfolio without the model'} {cost_after:.1f} €. "
+        f"The system's value is REACTION SPEED "
+        f"(×{_SPEEDUP:.1f} vs OR-Tools in latency), NOT quality: at a full budget (~30 s) OR "
+        f"beats the system on quality (the durable verdict). {or_note}.{ablated}")
     say(f"      → {takeaway}")
 
-    # [5/5] карты #2/#3 + compare.html (всё в congestion-мире остатка — НЕ статик-587.9€)
-    old_full = [[idx[k] for k in r] for r in old_res]  # остаток старого плана в full-нумерации
+    # [5/5] maps #2/#3 + compare.html (all in the remainder's congestion world — not static 587.9€)
+    old_full = [[idx[k] for k in r] for r in old_res]  # old-plan remainder in full numbering
     _render_map(inst, old_full, p_noreplan, graph=graph, stop2node=stop2node, cache=cache,
                 names=names, price=_eur(cost_before), price_val=cost_before,
-                title=f"{ctx['clock']} — ехать по-старому",
-                caption=("Остаток ИСПОЛНЯЕМОГО плана дня (диспетчерский greedy под congestion, "
-                         f"харнесс 0004 — не план карты #1) сквозь событие: {_eur(cost_before)} "
-                         + ("— маршрут перекрыт закрытием, план неисполним."
+                title=f"{ctx['clock']} — carry on as before",
+                caption=("The remainder of the EXECUTED day plan (the dispatcher's greedy under "
+                         "congestion, harness 0004 — not the plan of map #1) through the event: "
+                         + ("— the route is blocked by the closure, the plan cannot run."
                             if blocked else "(residual+congestion).")),
                 banner_color="#b23a1e", incidents=ctx["incidents"])
-    # «за 0.7 с» — durable медиана РЕАКЦИИ СИСТЕМЫ; под --no-model системы в прогоне не было
-    replan_title = "Наш re-plan за 0.7 с" if use_model else "Re-plan БЕЗ модели (--no-model)"
+    # 'in 0.7 s' — the durable median of the SYSTEM's reaction; under --no-model there was no system
+    replan_title = "Our re-plan in 0.7 s" if use_model else "Re-plan WITHOUT the model (--no-model)"
     if blocked:
-        cap3 = (f"{replan_title}: {cost_after:.1f} € — исполнимый план там, где старый "
-                "упирался в закрытие (∞).")
+        cap3 = (f"{replan_title}: {cost_after:.1f} € — an executable plan where the old one "
+                "ran into the closure (∞).")
     elif savings >= 0:
-        cap3 = (f"{replan_title}: {cost_after:.1f} € — экономия −{savings:.1f} € vs "
-                "«по-старому» (тот же residual-мир).")
+        cap3 = (f"{replan_title}: {cost_after:.1f} € — saving −{savings:.1f} € vs "
+                "'carry on as before' (the same residual world).")
     else:
-        cap3 = (f"{replan_title}: {cost_after:.1f} € (Δ {-savings:+.1f} € vs «по-старому»).")
-    cap3 += f" План построил кандидат «{win_src}»{win_pol}."
+        cap3 = (f"{replan_title}: {cost_after:.1f} € (Δ {-savings:+.1f} € vs 'as before').")
+    cap3 += f" The plan was built by candidate '{win_src}'{win_pol}."
     _render_map(inst, new_full, p_replan, graph=graph, stop2node=stop2node, cache=cache,
                 names=names, price=f"{cost_after:.1f} €", price_val=cost_after,
                 title=replan_title, caption=cap3, banner_color="#1a7a3c",
                 incidents=ctx["incidents"], old_routes=old_full)
-    c_lat = f"0.7 с ({_DUR['rl']} мс)" if use_model else f"{cmp['rl']['latency_ms']:.0f} мс прогона"
-    c_what = (f"портфель{'' if use_model else ' БЕЗ модели (--no-model)'}: победил «{win_src}»"
-              f"{win_pol}" + (f", реакция ×{_SPEEDUP:.1f}" if use_model else ""))
+    c_lat = f"0.7 s ({_DUR['rl']} ms)" if use_model else f"{cmp['rl']['latency_ms']:.0f} ms"
+    c_what = (f"portfolio{'' if use_model else ' WITHOUT the model (--no-model)'}: '{win_src}' won"
+              f"{win_pol}" + (f", reaction ×{_SPEEDUP:.1f}" if use_model else ""))
     _write_compare(p_compare, left=p_noreplan.name, right=p_replan.name, scene_title=scene, rows=[
-        ("A", "do-nothing (без реакции)", _eur(cost_before), "0 с",
-         "маршрут перекрыт: старый план неисполним" if blocked
-         else "едем старым планом, копятся задержки"),
-        ("B", "OR-Tools re-solve", f"{or_cost:.1f} €", f"~2 с ({_DUR['ortools']} мс)",
-         "пересчёт с нуля, бюджет ~2 с (полное качество — при ~30 с)"),
-        ("C", f"наша {sys_label}", f"{cost_after:.1f} €", c_lat, c_what)],
+        ("A", "do-nothing (no reaction)", _eur(cost_before), "0 s",
+         "route blocked: the old plan cannot run" if blocked
+         else "drive the old plan, delays accumulate"),
+        ("B", "OR-Tools re-solve", f"{or_cost:.1f} €", f"~2 s ({_DUR['ortools']} ms)",
+         "recompute from scratch, budget ~2 s (full quality at ~30 s)"),
+        ("C", f"our {sys_label}", f"{cost_after:.1f} €", c_lat, c_what)],
         takeaway=takeaway, right_caption=f"C: {replan_title}")
 
-    _step(5, "Итог дня (остаток под congestion+событие — ДРУГОЙ мир, не сравним со статик-планом):")
-    say(f"      • без re-plan (do-nothing): {_eur(cost_before)}"
-        + (" — план перекрыт закрытием (неисполним)" if blocked else ""))
-    say(f"      • после re-plan ({'система' if use_model else 'без модели'}): {cost_after:.1f} € "
-        + ("(исполнимый план вместо неисполнимого)" if blocked
+    _step(5, "Day outcome (the remainder under congestion+event — ANOTHER world):")
+    say(f"      • without a re-plan (do-nothing): {_eur(cost_before)}"
+        + (" — the plan is blocked by the closure (cannot run)" if blocked else ""))
+    say(f"      • after re-plan ({'system' if use_model else 'no model'}): {cost_after:.1f} € "
+        + ("(an executable plan instead of an impossible one)" if blocked
            else f"(Δ {cost_after - cost_before:+.1f}€)"))
-    say(f"      • on-time {ot:.0f}% · необслужено {uns} "
-        f"{'(все окна соблюдены ✓)' if ot >= 100 and uns == 0 else '(честно из scorer)'}")
+    say(f"      • on-time {ot:.0f}% · unserved {uns} "
+        f"{'(every window met ✓)' if ot >= 100 and uns == 0 else '(honestly from the scorer)'}")
     contrib = _print_contribution(plan_report, plan_out, anchor=anchor, use_model=use_model,
                                   budget_ms=cfg["budget_ms"], seed=seed,
                                   replan_nomodel=rep_nomodel)
-    say(f"      → карты: {p_noreplan.name} | {p_replan.name}  ·  кадр: {p_compare}")
+    say(f"      → maps: {p_noreplan.name} | {p_replan.name}  ·  frame: {p_compare}")
     if open_maps:
         webbrowser.open(p_compare.resolve().as_uri())
 
@@ -761,20 +762,20 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Единая нарративная демонстрация системы (реюз)")
+    ap = argparse.ArgumentParser(description="One narrative demonstration of the system (reuse)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--event", choices=("traffic", "breakdown", "urgent"), default="traffic")
     ap.add_argument("--out", default="demo_out")
-    ap.add_argument("--no-open", action="store_true", help="не открывать карты в браузере")
+    ap.add_argument("--no-open", action="store_true", help="do not open the maps in a browser")
     ap.add_argument("--scenario", default=None,
-                    help="YAML кастомного сценария (scenarios/*.yaml); без флага — дефолтный "
-                         "вторник, весь город (события берутся из сценария, --event игнорируется)")
+                    help="YAML of a custom scenario (scenarios/*.yaml); without it — the default "
+                         "Tuesday, whole city (events come from the scenario, --event is ignored)")
     ap.add_argument("--no-model", action="store_true",
-                    help="портфель БЕЗ RL-кандидатов (ablation: сколько даёт модель)")
+                    help="portfolio WITHOUT RL candidates (ablation: what the model adds)")
     args = ap.parse_args()
     run_demo(seed=args.seed, event_kind=args.event, out_dir=args.out, open_maps=not args.no_open,
              scenario_path=args.scenario, use_model=not args.no_model)
-    say("\nГотово. Артефакты в demo_out/ (вне git).")
+    say("\nDone. Artefacts in demo_out/ (outside git).")
 
 
 if __name__ == "__main__":

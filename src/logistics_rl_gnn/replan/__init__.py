@@ -1,1 +1,1 @@
-"""Re-plan на события (Phase 7): латентность реакции RL vs OR-Tools vs greedy."""
+"""Event-driven re-planning (Phase 7): reaction latency of RL vs OR-Tools vs greedy."""

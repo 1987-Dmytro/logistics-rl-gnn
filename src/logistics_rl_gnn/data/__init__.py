@@ -1,1 +1,1 @@
-"""Phase 2: OSMnx-пайплайн — дорожный граф Аугсбурга, депо, аптеки, congestion-профиль."""
+"""Phase 2: OSMnx pipeline — Augsburg road graph, depot, pharmacies, congestion profile."""

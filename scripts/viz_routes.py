@@ -1,10 +1,10 @@
-"""Phase 8 — карта доставки Аугсбурга: «Было» (greedy) vs «Стало» (полир. портфель).
+"""Phase 8 — Augsburg delivery map: "before" (greedy) vs "after" (polished portfolio).
 
-OSM-сеть (серым) + депо Phoenix (звезда) + 62 аптеки (точки) + маршруты по машинам (цвета).
-Две панели на ОДНОМ инстансе (seed 0, full-62, free-flow) — честное Было/Стало. PNG (README,
-в git) + интерактивный folium HTML (docs/, тяжёлый → вне git). Детерминирован (seed 0).
+OSM network (grey) + the Phoenix depot (star) + 62 pharmacies (dots) + routes per vehicle (colours).
+Two panels on ONE instance (seed 0, full-62, free-flow) — an honest before/after. PNG (README, in
+git) + an interactive folium HTML (docs/, heavy → outside git). Deterministic (seed 0).
 
-Запуск: python scripts/viz_routes.py [--seed 0] [--budget-ms 10000]
+Run: python scripts/viz_routes.py [--seed 0] [--budget-ms 10000]
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def _draw_routes(ax, inst, routes, title):
     v = 0
     for route in routes:
         stops = [n for n in route]
-        if len(stops) <= 2:  # пустой маршрут (депо-депо)
+        if len(stops) <= 2:  # empty route (depot-depot)
             continue
         xs = [coords[n][0] for n in stops]
         ys = [coords[n][1] for n in stops]
@@ -53,9 +53,9 @@ def _draw_routes(ax, inst, routes, title):
         v += 1
     ph = [i for i in range(1, len(inst.demand))]
     ax.scatter([coords[i][0] for i in ph], [coords[i][1] for i in ph],
-               s=14, c="#333", zorder=4, label="аптеки (62)")
+               s=14, c="#333", zorder=4, label="pharmacies (62)")
     ax.scatter([coords[0][0]], [coords[0][1]], s=180, marker="*", c="crimson",
-               edgecolors="k", zorder=5, label="депо Phoenix")
+               edgecolors="k", zorder=5, label="Phoenix depot")
     ax.set_title(title, fontsize=11)
     ax.set_xticks([])
     ax.set_yticks([])
@@ -63,15 +63,15 @@ def _draw_routes(ax, inst, routes, title):
 
 
 def _folium_map(inst, routes, out: Path, names=None):
-    """Интерактивная карта: полилинии по машинам + пронумерованные стопы в порядке объезда,
-    popup (имя аптеки/окно/ETA). ETA/окно — тот же walk, что route_sheet (единая семантика)."""
+    """Interactive map: polylines per vehicle + numbered stops in visiting order,
+    popup (pharmacy name/window/ETA). ETA/window — the same walk as route_sheet (one semantics)."""
     import folium
 
     names = names or {}
     c = inst.coords
     base = inst.start_datetime
     m = folium.Map(location=[c[0][1], c[0][0]], zoom_start=12, tiles="cartodbpositron")
-    folium.Marker([c[0][1], c[0][0]], tooltip="Депо PHOENIX",
+    folium.Marker([c[0][1], c[0][0]], tooltip="PHOENIX depot",
                   icon=folium.Icon(color="red", icon="star")).add_to(m)
     pal = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
     v = 0
@@ -80,13 +80,13 @@ def _folium_map(inst, routes, out: Path, names=None):
             continue
         col = pal[v % len(pal)]
         folium.PolyLine([[c[n][1], c[n][0]] for n in route], color=col,
-                        weight=3, opacity=0.85, tooltip=f"машина {v + 1}").add_to(m)
+                        weight=3, opacity=0.85, tooltip=f"vehicle {v + 1}").add_to(m)
         stops, _ = rs.walk_route(route, inst)
-        for k, s in enumerate(stops, start=1):  # k = порядок объезда в этой машине
+        for k, s in enumerate(stops, start=1):  # k = visiting order within this vehicle
             n = s["n"]
             popup = folium.Popup(
-                f"<b>{k}. {rs._label(s['snap'], names)}</b><br>маш. {v + 1} · "
-                f"ETA {rs._clock(base, s['arr_min'])}<br>окно "
+                f"<b>{k}. {rs._label(s['snap'], names)}</b><br>veh. {v + 1} · "
+                f"ETA {rs._clock(base, s['arr_min'])}<br>window "
                 f"{rs._clock(base, s['e_min'])}–{rs._clock(base, s['l_min'])}",
                 max_width=260,
             )
@@ -103,7 +103,7 @@ def _folium_map(inst, routes, out: Path, names=None):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Phase 8 — карта Было/Стало")
+    ap = argparse.ArgumentParser(description="Phase 8 — before/after map")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--budget-ms", type=float, default=10000.0)
     ap.add_argument("--out", default="docs/assets/routes_before_after.png")
@@ -111,8 +111,8 @@ def main() -> None:
     args = ap.parse_args()
 
     torch.manual_seed(0)
-    # инстанс на ТОТ ЖЕ снапшот, что граф-фон и имена (иначе рассинхрон координат/меток при
-    # нескольких снапшотах); _SNAP — снапшот, чей graph.graphml грузим ниже
+    # instance on THE SAME snapshot as the graph background and names (else coordinates/labels
+    # desynchronise across snapshots); _SNAP — the snapshot whose graph.graphml is loaded below
     inst = im.generate_instance(snapshot_dir=_SNAP, seed=args.seed)
     gr = greedy_routes(env=make_dynamic_env(inst, travel=None, fleet_size=im.FLEET_SIZE))
     pol = rd._load_policy(_CKPT)
@@ -121,23 +121,23 @@ def main() -> None:
 
     graph = ox.load_graphml(_SNAP / "graph.graphml")
     fig, axes = plt.subplots(1, 2, figsize=(15, 7.5))
-    for ax in axes:  # OSM-сеть серым фоном
+    for ax in axes:  # OSM network as a grey background
         ox.plot_graph(graph, ax=ax, node_size=0, edge_color="#dddddd", edge_linewidth=0.4,
                       show=False, close=False, bgcolor="white")
-    _draw_routes(axes[0], inst, gr, f"Было — greedy: {gc:.0f} €")
-    _draw_routes(axes[1], inst, sysr, f"Стало — полир. портфель: {sc:.0f} € ({sc / gc - 1:+.0%})")
-    fig.suptitle(f"Доставка в аптеки Аугсбурга (seed {args.seed}, 62 аптеки, 1 депо)", fontsize=13)
+    _draw_routes(axes[0], inst, gr, f"Before — greedy: {gc:.0f} €")
+    _draw_routes(axes[1], inst, sysr, f"After — polished: {sc:.0f} € ({sc / gc - 1:+.0%})")
+    fig.suptitle(f"Augsburg delivery (seed {args.seed}, 62 pharmacies, 1 depot)", fontsize=13)
     fig.tight_layout()
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=115, bbox_inches="tight")
     plt.close(fig)
-    print(f"→ {out}  (greedy {gc:.0f}€ vs система {sc:.0f}€, {sc / gc - 1:+.1%})")
+    print(f"→ {out}  (greedy {gc:.0f}€ vs system {sc:.0f}€, {sc / gc - 1:+.1%})")
 
     fol = Path(args.folium)
     _folium_map(inst, sysr, fol, names=rs.load_names(_SNAP))
     kb = fol.stat().st_size / 1024
-    print(f"→ {fol}  ({kb:.0f} KB{' — тяжёлый, вне git' if kb > 200 else ''})")
+    print(f"→ {fol}  ({kb:.0f} KB{' — heavy, outside git' if kb > 200 else ''})")
 
 
 if __name__ == "__main__":

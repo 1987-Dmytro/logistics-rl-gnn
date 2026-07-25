@@ -1,14 +1,15 @@
-"""Local-search polish декодированных маршрутов (Phase 6b Шаг 3.5). БЕЗ обучения.
+"""Local-search polish of decoded routes (Phase 6b Step 3.5). NO training.
 
-`polish` улучшает маршруты классическим local search:
-  • intra-route: 2-opt (реверс внутр. сегмента) + Or-opt (перенос сегмента 1–3 внутри маршрута);
-  • inter-route: relocate (клиент A→B) + swap (клиент A ↔ клиент B).
-Стоимость — ТОЛЬКО `evaluate_solution` (полная переоценка кандидата → корректно под time-dependent
-congestion, БЕЗ delta-cost допущений: реверс/перенос сдвигает все downstream-времена). Feasibility —
-`check_feasible` (жёстко как env: cap/TW/T_max/fleet). First-improvement, циклы до сходимости или
-`budget_ms`. **ИНВАРИАНТ: результат НЕ хуже входа** (best стартует входом, заменяется лишь строго
-лучшим феасибл-кандидатом). Операторы перераспределяют по СУЩЕСТВУЮЩИМ слотам — маршрут не
-добавляют (vehicles_used не растёт сверх fleet; пустые [0,0]-слоты дают relocate место под машину).
+`polish` improves routes with classic local search:
+  • intra-route: 2-opt (reverse an inner segment) + Or-opt (move a 1–3 segment within a route);
+  • inter-route: relocate (customer A→B) + swap (customer A ↔ customer B).
+Cost comes ONLY from `evaluate_solution` (a full re-evaluation of the candidate → correct under
+time-dependent congestion, WITHOUT delta-cost assumptions: a reversal/move shifts every downstream
+time). Feasibility comes from `check_feasible` (hard as the env: cap/TW/T_max/fleet).
+First-improvement, looping until convergence or `budget_ms`. **INVARIANT: the result is NEVER
+worse than the input** (best starts as the input and is replaced only by a strictly better feasible
+candidate). Operators redistribute over EXISTING slots — they never add a route (vehicles_used
+never grows beyond fleet; empty [0,0] slots give relocate room for a vehicle).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ def _cost(routes, instance, cfg, travel) -> float:
 
 
 def _normalize(routes, fleet_size):
-    """Каждый маршрут → минимум [0,0]; добить пустыми слотами до fleet_size (место для relocate)."""
+    """Every route → at least [0,0]; pad with empty slots up to fleet_size (room for relocate)."""
     norm = [list(r) if len(r) >= 2 else [0, 0] for r in routes]
     if fleet_size is not None:
         while len(norm) < fleet_size:
@@ -34,7 +35,7 @@ def _normalize(routes, fleet_size):
 
 
 def _two_opt(routes):
-    """Реверс внутреннего сегмента одного маршрута (depot-концы не трогаем)."""
+    """Reverse an inner segment of one route (depot ends untouched)."""
     for ri in range(len(routes)):
         r = routes[ri]
         for i in range(1, len(r) - 2):
@@ -45,21 +46,21 @@ def _two_opt(routes):
 
 
 def _or_opt(routes):
-    """Перенос сегмента длины 1–3 в другую позицию ТОГО ЖЕ маршрута (identity → отсеет strict<)."""
+    """Move a 1–3 segment to another position of the SAME route (identity → dropped by strict<)."""
     for ri in range(len(routes)):
         r = routes[ri]
         for seg_len in (1, 2, 3):
-            for p in range(1, len(r) - seg_len):  # сегмент [p, p+seg_len) — внутри интерьера
+            for p in range(1, len(r) - seg_len):  # segment [p, p+seg_len) — inside the interior
                 seg = r[p : p + seg_len]
                 rest = r[:p] + r[p + seg_len :]
-                for q in range(1, len(rest)):  # вставка между depot-концами rest
+                for q in range(1, len(rest)):  # insertion between the depot ends of rest
                     cand = [x[:] for x in routes]
                     cand[ri] = rest[:q] + seg + rest[q:]
                     yield cand
 
 
 def _relocate(routes):
-    """Перенос клиента из маршрута A в маршрут B (B может быть пустым [0,0] → новая машина)."""
+    """Move a customer from route A to route B (B may be an empty [0,0] → a new vehicle)."""
     for ai in range(len(routes)):
         ra = routes[ai]
         for p in range(1, len(ra) - 1):
@@ -77,7 +78,7 @@ def _relocate(routes):
 
 
 def _swap(routes):
-    """Обмен клиента маршрута A с клиентом маршрута B (пары ai<bi — без дублей)."""
+    """Swap a customer of route A with a customer of route B (pairs ai<bi — no duplicates)."""
     for ai in range(len(routes)):
         ra = routes[ai]
         for pa in range(1, len(ra) - 1):
@@ -91,7 +92,7 @@ def _swap(routes):
 
 
 def _moves(routes):
-    """Кандидаты в ФИКСИРОВАННОМ порядке (детерминизм): 2-opt → Or-opt → relocate → swap."""
+    """Candidates in a FIXED order (determinism): 2-opt → Or-opt → relocate → swap."""
     return chain(_two_opt(routes), _or_opt(routes), _relocate(routes), _swap(routes))
 
 
@@ -106,10 +107,10 @@ def polish(
     fleet_size: int | None = None,
     cfg: CostConfig | None = None,
 ) -> tuple[list, float]:
-    """Полировка маршрутов local-search'ем. -> (routes, cost€). НЕ хуже входа; feasibility как env.
+    """Polish routes with local search. -> (routes, cost€). Never worse than input; env feasibility.
 
-    budget_ms — потолок wall-clock (для сходимости в замерах ставь щедрый). fleet_size=None →
-    выводим из входа (число слотов). Стоимость/feasibility — единый scorer/check_feasible.
+    budget_ms — the wall-clock cap (set it generous when measuring convergence). fleet_size=None →
+    inferred from the input (number of slots). Cost/feasibility — the single scorer/check_feasible.
     """
     cfg = cfg or CostConfig()
     best = _normalize(routes, fleet_size)
@@ -121,7 +122,7 @@ def polish(
         )
 
     best_cost = _cost(best, instance, cfg, travel)
-    if not feas(best):  # вход инфеасибл → возвращаем как есть (инвариант: НЕ хуже входа)
+    if not feas(best):  # infeasible input → return as-is (invariant: never worse than the input)
         return best, best_cost
     deadline = time.perf_counter() + budget_ms / 1000.0
     improved = True
@@ -131,7 +132,7 @@ def polish(
             if time.perf_counter() >= deadline:
                 break
             c = _cost(cand, instance, cfg, travel)
-            if c < best_cost - 1e-9 and feas(cand):  # строго лучше И феасибл → first-improvement
+            if c < best_cost - 1e-9 and feas(cand):  # strictly better AND feasible → take it
                 best, best_cost, improved = cand, c, True
-                break  # рестарт enumerate с нового best
+                break  # restart enumerate from the new best
     return best, best_cost

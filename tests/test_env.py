@@ -1,5 +1,5 @@
-"""Тест VRPEnv (Phase 3 core). env_checker + tiny-reward идут всегда; property/детерминизм
-на реальном снапшоте — skip без него.
+"""VRPEnv test (Phase 3 core). env_checker + the tiny reward always run; property/determinism
+on the real snapshot are skipped without it.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from logistics_rl_gnn.env.vrp_env import VRPEnv
 
 
 def _tiny_instance(seed=0):
-    # депо(0) + 2 аптеки(1,2); секунды/метры (env переведёт в мин/км)
+    # depot(0) + 2 pharmacies(1,2); seconds/metres (the env converts to min/km)
     time_m = np.array([[0, 600, 1200], [600, 0, 900], [1200, 900, 0]], dtype=float)
     dist_m = np.array([[0, 5000, 10000], [5000, 0, 7500], [10000, 7500, 0]], dtype=float)
     return im.Instance(
@@ -27,7 +27,7 @@ def _tiny_instance(seed=0):
         coords=np.array([[10.0, 48.0], [10.1, 48.1], [10.2, 48.0]]),
         windows=np.array([[0, 36000], [0, 36000], [0, 36000]], dtype=float),
         demand=np.array([0.0, 10.0, 20.0]),
-        service=np.array([0.0, 240.0, 240.0]),  # 4 мин
+        service=np.array([0.0, 240.0, 240.0]),  # 4 min
         tw_source=["DEPOT", "REAL", "REAL"],
         excluded_stops=[],
         start_datetime=datetime(2024, 1, 2, 8),
@@ -45,14 +45,14 @@ def test_env_checker():
 
 
 def test_tiny_reward():
-    env = _tiny_env()  # c_f=50, c_d=0.5, c_t=20 (дефолт cfg)
+    env = _tiny_env()  # c_f=50, c_d=0.5, c_t=20 (default cfg)
     env.reset(seed=0)
     _, r1, term1, _, _ = env.step(1)
-    assert not term1 and r1 == 0.0  # разрежённый: до терминала 0
+    assert not term1 and r1 == 0.0  # sparse: 0 until the terminal step
     _, r2, term2, trunc2, info = env.step(2)
     assert term2 and not trunc2
-    # ручной расчёт (мин/км), маршрут 0→1→2→0:
-    #   время = 10 + 4 + 15 + 4 + 20 = 53 мин; пробег = 5 + 7.5 + 10 = 22.5 км; машин=1
+    # manual computation (min/km), route 0→1→2→0:
+    #   time = 10 + 4 + 15 + 4 + 20 = 53 min; distance = 5 + 7.5 + 10 = 22.5 km; vehicles=1
     expected = -(50.0 * 1 + 0.5 * 22.5 + 20.0 * 53.0 / 60.0)
     assert r2 == pytest.approx(expected)
     assert info["vehicles_used"] == 1
@@ -63,8 +63,8 @@ def test_tiny_reward():
 
 
 def test_dense_matches_sparse_total():
-    # dense раздаёт variable по шагам, sparse — терминалом; суммарный reward эпизода
-    # ОДИНАКОВ и равен единому evaluate_solution (одна формула, разное credit-assignment)
+    # dense hands out a variable amount per step, sparse pays at the terminal; the episode's
+    # total reward is THE SAME and equals evaluate_solution (one formula, different credit)
     from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution
 
     def rollout(dense):
@@ -88,25 +88,25 @@ def test_dense_matches_sparse_total():
 def test_invalid_action_terminates():
     env = _tiny_env()
     env.reset(seed=0)
-    env.step(1)  # аптека 1 посещена
-    _, r, term, _, info = env.step(1)  # снова 1 — не по маске
+    env.step(1)  # pharmacy 1 visited
+    _, r, term, _, info = env.step(1)  # 1 again — not allowed by the mask
     assert term and r == pytest.approx(-im.PENALTY_INVALID)
     assert info["invalid_action"] == 1
 
 
-# ---------- на реальном снапшоте (skip без снапшота) ----------
+# ---------- on the real snapshot (skipped without one) ----------
 
 
 def _snap_ok():
     return im._latest_snapshot_dir() is not None
 
 
-@pytest.mark.skipif(not _snap_ok(), reason="нет снапшота: python scripts/build_snapshot.py")
+@pytest.mark.skipif(not _snap_ok(), reason="no snapshot: python scripts/build_snapshot.py")
 def test_env_checker_snapshot():
     check_env(VRPEnv(), skip_render_check=True)
 
 
-@pytest.mark.skipif(not _snap_ok(), reason="нет снапшота")
+@pytest.mark.skipif(not _snap_ok(), reason="no snapshot")
 def test_property_invariants():
     k, q = im.FLEET_SIZE, im.VEHICLE_CAP
     for seed in range(5):
@@ -118,18 +118,18 @@ def test_property_invariants():
             obs, _, term, trunc, info = env.step(env.sample_valid_action(obs))
         routes = info["routes"]
         served = [n for rt in routes for n in rt if n != 0]
-        for rt in routes:  # старт/финиш в депо
+        for rt in routes:  # start/finish at the depot
             assert rt[0] == 0 and rt[-1] == 0
-        assert len(served) == len(set(served)), "аптека посещена >1 раза"
+        assert len(served) == len(set(served)), "a pharmacy was visited >1 time"
         assert info["vehicles_used"] <= k
-        assert info["late_min"] == 0.0  # masking → без опозданий (TW соблюдены)
+        assert info["late_min"] == 0.0  # masking → no lateness (TW respected)
         inst = env._instance_fn(seed)
-        for rt in routes:  # cap не нарушен на маршруте
+        for rt in routes:  # cap is not violated on the route
             assert sum(inst.demand[n] for n in rt if n != 0) <= q + 1e-9
-        assert sum(inst.demand[n] for n in served) <= k * q + 1e-9  # спрос ≤ K*Q
+        assert sum(inst.demand[n] for n in served) <= k * q + 1e-9  # demand ≤ K*Q
 
 
-@pytest.mark.skipif(not _snap_ok(), reason="нет снапшота")
+@pytest.mark.skipif(not _snap_ok(), reason="no snapshot")
 def test_determinism():
     def rollout(seed):
         env = VRPEnv()

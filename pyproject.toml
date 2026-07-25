@@ -26,8 +26,8 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-# NOTE: рантайм-зависимости (torch / torch-geometric / gymnasium / ortools ...)
-# пиним ПОСЛЕ фиксации постановки RL-задачи и целевого железа (CPU vs ROCm).
+# NOTE: runtime dependencies (torch / torch-geometric / gymnasium / ortools ...)
+# are pinned AFTER the RL problem statement and the target hardware are fixed (CPU vs ROCm).
 dependencies = []
 
 # TODO(publish): replace <user> with the real GitHub path before release.
@@ -42,31 +42,31 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
 ]
-# Phase 2: OSMnx-пайплайн (CPU). geopandas/shapely подтянет osmnx.
+# Phase 2: the OSMnx pipeline (CPU). geopandas/shapely come with osmnx.
 data = [
     "osmnx>=2.0,<3",
     "networkx>=3.0",
     "pandas>=2.0",
     "numpy>=1.26",
-    "pyarrow>=15",  # parquet I/O для матриц/узлов
-    "pyyaml>=6",  # scenarios/*.yaml (config.scenario — кастомный день диспетчера)
+    "pyarrow>=15",  # parquet I/O for matrices/nodes
+    "pyyaml>=6",  # scenarios/*.yaml (config.scenario — a custom dispatcher day)
 ]
-# Phase 3: RL-среда.
+# Phase 3: the RL environment.
 env = [
     "gymnasium>=1.0",
-    "opening_hours_py",  # парсинг OSM opening_hours (Rust-биндинг; модуль обычно opening_hours)
+    "opening_hours_py",  # parsing OSM opening_hours (Rust binding; module usually opening_hours)
 ]
-# Phase 4: бейзлайны (честное «Было»). OR-Tools CVRPTW; greedy — без доп. депов.
+# Phase 4: baselines (an honest "before"). OR-Tools CVRPTW; greedy needs no extra deps.
 baselines = [
     "ortools>=9.10",
 ]
-# Phase 5: политика GNN+attention (CPU). torch ставить с CPU-index:
+# Phase 5: the GNN+attention policy (CPU). Install torch from the CPU index:
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
 model = [
     "torch>=2.2",
     "torch-geometric>=2.5",
 ]
-# Phase 8: визуализация кейса (карты/анимации/кривые). osmnx/networkx уже в [data].
+# Phase 8: case visualisation (maps/animations/curves). osmnx/networkx already in [data].
 viz = [
     "matplotlib>=3.8",
     "imageio>=2.34",

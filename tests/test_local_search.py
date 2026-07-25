@@ -1,8 +1,8 @@
-"""Phase 6b Шаг 3.5 — local-search polish декодированных маршрутов.
+"""Phase 6b Step 3.5 — local-search polish of decoded routes.
 
-Стражи (порядок = порядок сборки): оракул check_feasible (parity с env-семантикой + границы
-cap/TW/T_max + agreement с evaluate_solution) → потом операторы polish (не ухудшает, feasibility
-сохранена, детерминизм, бюджет, parity-оптимум).
+Guards (order = build order): the check_feasible oracle (parity with env semantics + the
+cap/TW/T_max boundaries + agreement with evaluate_solution) → then the polish operators (never
+worse, feasibility preserved, determinism, budget, optimum parity).
 """
 
 from __future__ import annotations
@@ -16,15 +16,15 @@ import pytest
 from logistics_rl_gnn.config import instance as im
 from logistics_rl_gnn.env.scoring import CostConfig, check_feasible, evaluate_solution
 
-# тесты на VRPEnv()/_real_greedy строят инстанс из реального снапшота — скипаем без него (как
-# test_env/test_model), иначе на голом раннере (снапшот вне git, запрет №1) → FileNotFoundError.
-_NEED_SNAP = pytest.mark.skipif(im._latest_snapshot_dir() is None, reason="нет снапшота")
+# tests using VRPEnv()/_real_greedy build an instance from the real snapshot — skipped without it
+# (as test_env/test_model), else a bare runner (snapshot outside git, #1) → FileNotFoundError.
+_NEED_SNAP = pytest.mark.skipif(im._latest_snapshot_dir() is None, reason="no snapshot")
 
 
 def _mk(time_min, win_min, demand, svc_min, *, n):
-    """Контролируемый инстанс: времена/окна/сервис в МИНУТАХ (внутри → сек, как реальный)."""
+    """A controlled instance: times/windows/service in MINUTES (converted to seconds inside)."""
     tm = np.asarray(time_min, dtype=float) * 60.0
-    dm = np.asarray(time_min, dtype=float) * 100.0  # дистанция произвольна (не влияет на feas)
+    dm = np.asarray(time_min, dtype=float) * 100.0  # distance is arbitrary (does not affect feas)
     return im.Instance(
         node_ids=list(range(n)),
         snapshot_stops=list(range(n)),
@@ -44,12 +44,12 @@ def _mk(time_min, win_min, demand, svc_min, *, n):
 
 
 def _boundary_inst():
-    """3 узла, симметрично 10мин/ребро; c1,c2 demand 40, service 5мин; окна [0,100]."""
+    """3 nodes, symmetric 10 min/edge; c1,c2 demand 40, service 5 min; windows [0,100]."""
     t = [[0, 10, 10], [10, 0, 10], [10, 10, 0]]
     return _mk(t, [[0, 1000], [0, 100], [0, 100]], [0, 40, 40], [0, 5, 5], n=3)
 
 
-# route [0,1,2,0]: arrive1=10 (+svc5→15), arrive2=25 (+svc5→30), return=40мин; load=80.
+# route [0,1,2,0]: arrive1=10 (+svc5→15), arrive2=25 (+svc5→30), return=40 min; load=80.
 
 
 def test_check_feasible_boundary_cap():
@@ -62,12 +62,12 @@ def test_check_feasible_boundary_cap():
 def test_check_feasible_boundary_tmax():
     inst = _boundary_inst()
     r = [[0, 1, 2, 0]]
-    assert check_feasible(r, inst, t_max_min=40, vehicle_cap=80, fleet_size=8)  # возврат ровно 40
+    assert check_feasible(r, inst, t_max_min=40, vehicle_cap=80, fleet_size=8)  # return exactly 40
     assert not check_feasible(r, inst, t_max_min=39.9, vehicle_cap=80, fleet_size=8)
 
 
 def test_check_feasible_boundary_tw():
-    # окно c1 = [0, 9]: прибытие 10 > 9 → TW нарушено (env-жёстко, не через штраф)
+    # window c1 = [0, 9]: arrival 10 > 9 → TW violated (hard as in the env, not via a penalty)
     t = [[0, 10, 10], [10, 0, 10], [10, 10, 0]]
     inst = _mk(t, [[0, 1000], [0, 9], [0, 100]], [0, 40, 40], [0, 5, 5], n=3)
     assert not check_feasible([[0, 1, 2, 0]], inst, t_max_min=240, vehicle_cap=80, fleet_size=8)
@@ -75,18 +75,18 @@ def test_check_feasible_boundary_tw():
 
 def test_check_feasible_fleet_cap():
     inst = _boundary_inst()
-    two = [[0, 1, 0], [0, 2, 0]]  # 2 непустых маршрута
+    two = [[0, 1, 0], [0, 2, 0]]  # 2 non-empty routes
     assert check_feasible(two, inst, t_max_min=240, vehicle_cap=80, fleet_size=2)
     assert not check_feasible(two, inst, t_max_min=240, vehicle_cap=80, fleet_size=1)
 
 
 def test_check_feasible_per_customer_return_asymmetric():
-    """Асимметричный возврат (не-метрич., как OSM): return≤T_max проверяется ПОСЛЕ КАЖДОГО клиента.
+    """Asymmetric return (non-metric, like OSM): return≤T_max is checked AFTER EVERY customer.
 
-    Регрессия на находку review: [0,1,2,0] завершается за 20мин, НО прямой возврат из узла 1
-    стоит 100 → env не построил бы (10+100>50). check_feasible обязан отвергнуть (строго как env).
+    Regression on a review finding: [0,1,2,0] finishes in 20 min, BUT a direct return from node 1
+    costs 100 → the env would not build it (10+100>50). check_feasible must reject (env-strict).
     """
-    t = [[0, 10, 10], [100, 0, 5], [10, 5, 0]]  # t(1,0)=100 — дорогой прямой возврат из 1
+    t = [[0, 10, 10], [100, 0, 5], [10, 5, 0]]  # t(1,0)=100 — an expensive direct return from 1
     inst = _mk(t, [[0, 1000]] * 3, [0, 10, 10], [0, 0, 0], n=3)
     assert not check_feasible([[0, 1, 2, 0]], inst, t_max_min=50, vehicle_cap=80, fleet_size=8)
     assert check_feasible([[0, 1, 2, 0]], inst, t_max_min=120, vehicle_cap=80, fleet_size=8)
@@ -94,7 +94,7 @@ def test_check_feasible_per_customer_return_asymmetric():
 
 @_NEED_SNAP
 def test_check_feasible_agrees_with_env_on_real_greedy():
-    """Реальный greedy-план из env феасибл по check_feasible (тот же источник семантики)."""
+    """A real greedy plan from the env is feasible per check_feasible (same semantics source)."""
     from logistics_rl_gnn.baselines.greedy import greedy_routes
     from logistics_rl_gnn.env.vrp_env import VRPEnv
 
@@ -106,7 +106,7 @@ def test_check_feasible_agrees_with_env_on_real_greedy():
 
 
 def test_check_feasible_agreement_with_evaluate_tw():
-    """Agreement: при ok cap/T_max/fleet, TW-вердикт check_feasible == (on_time 100% в evaluate)."""
+    """Agreement: with cap/T_max/fleet ok, the check_feasible TW verdict == on_time 100%."""
     t = [[0, 10, 10], [10, 0, 10], [10, 10, 0]]
     ok = _mk(t, [[0, 1000], [0, 100], [0, 100]], [0, 10, 10], [0, 5, 5], n=3)
     late = _mk(t, [[0, 1000], [0, 9], [0, 100]], [0, 10, 10], [0, 5, 5], n=3)
@@ -115,10 +115,10 @@ def test_check_feasible_agreement_with_evaluate_tw():
     assert check_feasible(r, ok, t_max_min=240, vehicle_cap=80, fleet_size=8)
     assert evaluate_solution(r, ok, cfg)["on_time_pct"] == pytest.approx(100.0)
     assert not check_feasible(r, late, t_max_min=240, vehicle_cap=80, fleet_size=8)
-    assert evaluate_solution(r, late, cfg)["on_time_pct"] < 100.0  # оба видят опоздание
+    assert evaluate_solution(r, late, cfg)["on_time_pct"] < 100.0  # both see the lateness
 
 
-# ---------- операторы polish ----------
+# ---------- polish operators ----------
 
 import time  # noqa: E402
 
@@ -132,22 +132,22 @@ from logistics_rl_gnn.replan.local_search import (  # noqa: E402
 
 
 def _custs(routes):
-    """Мультимножество клиентов (не-депо) во всех маршрутах — для проверки консервации."""
+    """Multiset of (non-depot) customers over all routes — to check conservation."""
     return sorted(n for r in routes for n in r if n != 0)
 
 
 @pytest.mark.parametrize("op", [_two_opt, _or_opt, _relocate, _swap])
 def test_operator_conserves_customers_and_structure(op):
-    """Оператор: кандидаты сохраняют мультимножество клиентов и depot-концы (нет потери/дубля)."""
+    """Operator: candidates preserve the customer multiset and the depot ends (no loss/dup)."""
     routes = [[0, 1, 2, 3, 0], [0, 4, 5, 0]]
     base = _custs(routes)
     n = 0
     for cand in op(routes):
-        assert _custs(cand) == base, f"{op.__name__}: клиенты изменились"
+        assert _custs(cand) == base, f"{op.__name__}: customers changed"
         for r in cand:
-            assert r[0] == 0 and r[-1] == 0, f"{op.__name__}: depot-конец сломан"
+            assert r[0] == 0 and r[-1] == 0, f"{op.__name__}: a depot end is broken"
         n += 1
-    assert n > 0, f"{op.__name__}: не сгенерировал кандидатов"
+    assert n > 0, f"{op.__name__}: generated no candidates"
 
 
 def _real_greedy(seed, travel_none=True):
@@ -162,23 +162,24 @@ def _real_greedy(seed, travel_none=True):
 @_NEED_SNAP
 @pytest.mark.parametrize("seed", range(6))
 def test_polish_never_worse_and_feasible(seed):
-    """Инвариант: polish ≤ вход И феасибл, на многих реальных сидах (full-62 free-flow)."""
+    """Invariant: polish ≤ input AND feasible, over many real seeds (full-62 free-flow)."""
     routes, inst = _real_greedy(seed)
     cfg = CostConfig()
     base = -evaluate_solution(routes, inst, cfg)["reward"]
     out, cost = polish(routes, inst, None, budget_ms=300.0, fleet_size=im.FLEET_SIZE)
-    assert cost <= base + 1e-6, f"seed {seed}: polish ухудшил ({cost} > {base})"
+    assert cost <= base + 1e-6, f"seed {seed}: polish made it worse ({cost} > {base})"
     assert check_feasible(
         out, inst, t_max_min=im.T_MAX_MIN, vehicle_cap=im.VEHICLE_CAP, fleet_size=im.FLEET_SIZE
-    ), f"seed {seed}: polish вернул инфеасибл"
-    assert _custs(out) == _custs(routes), f"seed {seed}: pot/polish потерял клиентов"
+    ), f"seed {seed}: polish returned an infeasible solution"
+    assert _custs(out) == _custs(routes), f"seed {seed}: pot/polish lost customers"
 
 
 def test_polish_never_returns_env_infeasible_asymmetric():
-    """Money-path (репро verifier'а): дешёвый 2-opt-сосед env-инфеасибл — polish не берёт.
+    """Money path (verifier repro): a cheap 2-opt neighbour is env-infeasible — polish rejects it.
 
-    4 узла, T_max=50: вход [0,1,3,2,0] феасибл (возврат из 1 = 48≤50); реверс → [0,3,1,2,0] дешевле
-    (20<21), НО возврат из 1 = 52>50 (env-инфеасибл). polish обязан вернуть феасибл (строгий check).
+    4 nodes, T_max=50: the input [0,1,3,2,0] is feasible (return from 1 = 48≤50); the reversal →
+    [0,3,1,2,0] is cheaper (20<21) BUT the return from 1 = 52>50 (env-infeasible). polish must
+    return a feasible solution (strict check).
     """
     t = [[0, 6, 5, 5], [42, 0, 5, 5], [5, 5, 0, 5], [5, 5, 5, 0]]
     inst = _mk(t, [[0, 1000]] * 4, [0, 10, 10, 10], [0, 0, 0, 0], n=4)
@@ -186,12 +187,12 @@ def test_polish_never_returns_env_infeasible_asymmetric():
     assert check_feasible(inp, inst, t_max_min=50, vehicle_cap=80, fleet_size=8)
     out, _ = polish(inp, inst, None, budget_ms=2000.0, t_max_min=50, fleet_size=8)
     ok = check_feasible(out, inst, t_max_min=50, vehicle_cap=80, fleet_size=8)
-    assert ok, "polish вернул env-инфеасибл"
+    assert ok, "polish returned an env-infeasible solution"
 
 
 def test_polish_deterministic_at_convergence():
-    """Детерминизм при сходимости (нет set/dict-итерации). МАЛЫЙ инстанс → сходимость за мс, бюджет
-    не связывает даже под нагрузкой (на n=62 бюджет мог бы обрезать → wall-clock-недетерминизм)."""
+    """Determinism at convergence (no set/dict iteration). A SMALL instance → convergence in ms,
+    the budget never binds even under load (at n=62 it could cut in → wall-clock nondeterminism)."""
     rng = np.random.default_rng(3)
     n = 9
     coords = rng.uniform(0, 8, size=(n, 2))
@@ -202,22 +203,22 @@ def test_polish_deterministic_at_convergence():
     b = polish(routes, inst, None, budget_ms=5000.0, t_max_min=100000, fleet_size=4)
     assert a[0] == b[0] and a[1] == pytest.approx(b[1])
     raw = -evaluate_solution(routes, inst, CostConfig())["reward"]
-    assert a[1] <= raw + 1e-9  # реально сошёлся (не хуже входа)
+    assert a[1] <= raw + 1e-9  # genuinely converged (no worse than the input)
 
 
 @_NEED_SNAP
 def test_polish_respects_budget():
-    """Малый бюджет → возврат в пределах бюджета + слак (проверка дедлайна перед каждым eval)."""
+    """A small budget → return within the budget + slack (deadline checked before every eval)."""
     routes, inst = _real_greedy(0)
     t0 = time.perf_counter()
     polish(routes, inst, None, budget_ms=40.0, fleet_size=im.FLEET_SIZE)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    assert elapsed_ms < 40.0 + 200.0, f"бюджет 40мс, ушло {elapsed_ms:.0f}мс"
+    assert elapsed_ms < 40.0 + 200.0, f"budget 40ms, spent {elapsed_ms:.0f}ms"
 
 
 def test_polish_leaves_optimum_untouched():
-    """Parity: на brute-force-оптимуме tiny polish НЕ ломает оптимальное (возвращает его)."""
-    # 3 клиента, 1 машина; асимметричные времена → единственный дешёвый порядок
+    """Parity: on a brute-force tiny optimum polish does NOT break it (it returns the optimum)."""
+    # 3 customers, 1 vehicle; asymmetric times → a single cheap order
     t = [[0, 5, 9, 20], [5, 0, 6, 15], [9, 6, 0, 7], [20, 15, 7, 0]]
     inst = _mk(t, [[0, 1000]] * 4, [0, 10, 10, 10], [0, 2, 2, 2], n=4)
     cfg = CostConfig()
@@ -231,5 +232,5 @@ def test_polish_leaves_optimum_untouched():
         if c < best_c:
             best_r, best_c = r, c
     out, cost = polish(best_r, inst, None, budget_ms=3000.0, fleet_size=1)
-    assert cost == pytest.approx(best_c), "polish изменил стоимость оптимума"
+    assert cost == pytest.approx(best_c), "polish changed the optimum cost"
     assert _custs(out) == _custs(best_r)

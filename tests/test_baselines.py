@@ -1,11 +1,11 @@
-"""Тесты бейзлайнов Phase 4. Единый оценщик на tiny — без снапшота/ortools (нужны лишь
-рантайм-депы среды: `.[env]`); greedy/OR-Tools на реальном снапшоте — skip без него/без ortools.
+"""Phase 4 baseline tests. The single scorer on tiny — no snapshot/ortools needed (only the env
+runtime deps: `.[env]`); greedy/OR-Tools on the real snapshot — skipped without them.
 """
 
 from __future__ import annotations
 
 import pytest
-from test_env import _tiny_instance  # реюз Phase 3 tiny (депо + 2 аптеки, известная стоимость)
+from test_env import _tiny_instance  # reuse the Phase 3 tiny (depot + 2 pharmacies, known cost)
 
 from logistics_rl_gnn.baselines.greedy import greedy_routes
 from logistics_rl_gnn.config import instance as im
@@ -25,15 +25,15 @@ def _has_ortools() -> bool:
         return False
 
 
-_NEED_SNAP = pytest.mark.skipif(not _snap_ok(), reason="нет снапшота")
-_NEED_OR = pytest.mark.skipif(not (_snap_ok() and _has_ortools()), reason="нет снапшота/ortools")
+_NEED_SNAP = pytest.mark.skipif(not _snap_ok(), reason="no snapshot")
+_NEED_OR = pytest.mark.skipif(not (_snap_ok() and _has_ortools()), reason="no snapshot/ortools")
 
 
-# ---------- единый оценщик на tiny (всегда) ----------
+# ---------- the single scorer on tiny (always) ----------
 
 
 def test_evaluate_tiny_known_cost():
-    # маршрут 0→1→2→0: время=10+4+15+4+20=53мин; пробег=5+7.5+10=22.5км; машин=1 (см. test_env)
+    # route 0→1→2→0: time=10+4+15+4+20=53min; distance=5+7.5+10=22.5km; vehicles=1 (see test_env)
     r = evaluate_solution([[0, 1, 2, 0]], _tiny_instance(), CostConfig())
     expected = -(50.0 * 1 + 0.5 * 22.5 + 20.0 * 53.0 / 60.0)
     assert r["reward"] == pytest.approx(expected)
@@ -45,13 +45,13 @@ def test_evaluate_tiny_known_cost():
 
 
 def test_evaluate_counts_unserved():
-    # обслужена только аптека 1 → 1 необслуженная; пустой хвост-маршрут не считается машиной
+    # only pharmacy 1 is served → 1 unserved; an empty trailing route is not counted as a vehicle
     r = evaluate_solution([[0, 1, 0], [0]], _tiny_instance(), CostConfig())
     assert r["unserved"] == 1
     assert r["vehicles_used"] == 1
 
 
-# ---------- greedy (реальный снапшот) ----------
+# ---------- greedy (real snapshot) ----------
 
 
 @_NEED_SNAP
@@ -59,8 +59,8 @@ def test_greedy_serves_all_on_time():
     for seed in (0, 1):
         inst = im.generate_instance(seed=seed)
         r = evaluate_solution(greedy_routes(seed=seed), inst, CostConfig())
-        assert r["unserved"] == 0, f"greedy оставил необслуженные (seed={seed})"
-        assert r["on_time_pct"] == pytest.approx(100.0)  # late=0 под маскингом TW
+        assert r["unserved"] == 0, f"greedy left customers unserved (seed={seed})"
+        assert r["on_time_pct"] == pytest.approx(100.0)  # late=0 under TW masking
 
 
 @_NEED_SNAP
@@ -68,7 +68,7 @@ def test_greedy_deterministic():
     assert greedy_routes(seed=3) == greedy_routes(seed=3)
 
 
-# ---------- OR-Tools (реальный снапшот + ortools) ----------
+# ---------- OR-Tools (real snapshot + ortools) ----------
 
 
 @_NEED_OR
@@ -80,7 +80,7 @@ def test_ortools_serves_all_on_time():
         inst = im.generate_instance(seed=seed)
         routes = ortools_vrptw.ortools_routes(inst, cfg, time_limit_s=8)
         r = evaluate_solution(routes, inst, cfg)
-        assert r["unserved"] == 0, f"OR-Tools оставил необслуженные (seed={seed})"
+        assert r["unserved"] == 0, f"OR-Tools left customers unserved (seed={seed})"
         assert r["on_time_pct"] == pytest.approx(100.0)
 
 
@@ -92,4 +92,4 @@ def test_ortools_not_worse_than_greedy():
     cfg = CostConfig()
     r_g = evaluate_solution(greedy_routes(seed=0), inst, cfg)
     r_o = evaluate_solution(ortools_vrptw.ortools_routes(inst, cfg, time_limit_s=10), inst, cfg)
-    assert r_o["reward"] >= r_g["reward"] - 1e-6, "OR-Tools хуже greedy — проверь objective"
+    assert r_o["reward"] >= r_g["reward"] - 1e-6, "OR-Tools worse than greedy — check objective"

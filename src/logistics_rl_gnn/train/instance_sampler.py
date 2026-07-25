@@ -1,9 +1,10 @@
-"""Распределение инстансов для обучения (Phase 6).
+"""Instance distribution for training (Phase 6).
 
-Эпизод = случайное подмножество аптек (~n_range) реального Аугсбурга + сид-спрос. Окна —
-реальные (из базовой генерации Phase 3; ASSUMED-фолбэк там же), матрицы/координаты режутся
-из полного инстанса. Снапшот грузится ОДИН раз (кэш полного инстанса). Спрос добирается
-жадно до target с контролем Σdemand ≤ K·Q → инстанс гарантированно feasible (+ страж на срезе).
+An episode = a random subset of real Augsburg pharmacies (~n_range) + seeded demand. Windows
+are real (from the Phase 3 base generation; the ASSUMED fallback lives there too), matrices and
+coordinates are sliced out of the full instance. The snapshot is loaded ONCE (full-instance
+cache). Demand is filled greedily up to target while keeping Σdemand ≤ K·Q → the instance is
+feasible by construction (+ a guard on the slice).
 """
 
 from __future__ import annotations
@@ -20,21 +21,21 @@ class InstanceSampler:
         self.full = im.generate_instance(
             seed=base_seed, delivery_weekday=delivery_weekday
         )  # 1 load
-        self.n_ph = len(self.full.demand) - 1  # аптек в полном (депо = индекс 0)
+        self.n_ph = len(self.full.demand) - 1  # pharmacies in the full instance (depot = index 0)
         self.n_min, self.n_max = n_range
         self.cap = im.FLEET_SIZE * im.VEHICLE_CAP
 
     def sample(self, seed: int):
-        """Инстанс-подмножество по сиду (детерминирован). demand[0]=депо=0."""
+        """Instance subset for a seed (deterministic). demand[0]=depot=0."""
         rng = np.random.default_rng(seed)
         target = int(rng.integers(self.n_min, min(self.n_max, self.n_ph) + 1))
-        order = rng.permutation(np.arange(1, self.n_ph + 1))  # случайный порядок аптек
+        order = rng.permutation(np.arange(1, self.n_ph + 1))  # random order of pharmacies
         demand = rng.integers(
             im.DEMAND_RANGE[0], im.DEMAND_RANGE[1] + 1, size=self.n_ph + 1
         ).astype(float)
         demand[0] = 0.0
         chosen, total = [], 0.0
-        for p in order:  # добираем до target, держа Σdemand ≤ K·Q (feasible by construction)
+        for p in order:  # fill up to target while holding Σdemand ≤ K·Q (feasible by construction)
             if len(chosen) >= target:
                 break
             if total + demand[p] <= self.cap:
@@ -58,6 +59,7 @@ class InstanceSampler:
             service=f.service[idx],
             meta={**f.meta, "n_sub": len(idx)},
         )
-        # страж на срезе (ручной replace минует guard в generate_instance) → тихий баг = громкий
+        # guard on the slice (a manual replace bypasses the guard in generate_instance) → a silent
+        # bug becomes a loud one
         im._check_feasibility(sub.demand, sub.service, sub.time_matrix, sub.windows[:, 0])
         return sub

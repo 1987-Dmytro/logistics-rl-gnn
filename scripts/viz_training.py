@@ -1,10 +1,10 @@
-"""Phase 8 — кривые обучения (Phase 6 REINFORCE → POMO → congestion → residual).
+"""Phase 8 — training curves (Phase 6 REINFORCE → POMO → congestion → residual).
 
-Парсит results/*.log (train-cost + энтропия по эпохам), рисует прогресс фаз двумя панелями +
-метит события (loss sign-fix, early-stop, гейт 0011 FAIL). PNG → docs/assets/ (малый, в git —
-документированное исключение из запрета №1). Идемпотентен, без RNG, results/*.json НЕ трогает.
+Parses results/*.log (train cost + entropy per epoch), draws the phase progress in two panels and
+marks the events (loss sign-fix, early-stop, gate 0011 FAIL). PNG → docs/assets/ (small, in git —
+a documented exception to prohibition #1). Idempotent, no RNG, results/*.json untouched.
 
-Запуск: python scripts/viz_training.py [--out docs/assets/training_curves.png]
+Run: python scripts/viz_training.py [--out docs/assets/training_curves.png]
 """
 
 from __future__ import annotations
@@ -15,14 +15,14 @@ from pathlib import Path
 
 import matplotlib
 
-matplotlib.use("Agg")  # без дисплея (CPU-сервер/CI)
+matplotlib.use("Agg")  # headless (CPU server/CI)
 import matplotlib.pyplot as plt  # noqa: E402
 
 _EP = re.compile(r"(?:epoch|ep)\s+(\d+)")
 _COST = re.compile(r"train(?:_cost)?\s+([\d.]+)")
 _H = re.compile(r"\bH\s+([\d.]+)")
 
-# хронология фаз: (лог, подпись, цвет)
+# phase chronology: (log, label, colour)
 _PHASES = [
     ("results/train_20260721.log", "Phase 6 · REINFORCE", "#9467bd"),
     ("results/pomo_20260721_1914.log", "Phase 6b · POMO static", "#1f77b4"),
@@ -32,7 +32,7 @@ _PHASES = [
 
 
 def parse_log(path: str):
-    """-> (epochs, costs, entropies) из train-лога (регекс, устойчив к формату фаз)."""
+    """-> (epochs, costs, entropies) from a train log (regex, robust to phase formatting)."""
     eps, costs, hs = [], [], []
     for line in Path(path).read_text().splitlines():
         m, c, h = _EP.search(line), _COST.search(line), _H.search(line)
@@ -44,7 +44,7 @@ def parse_log(path: str):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Phase 8 — кривые обучения")
+    ap = argparse.ArgumentParser(description="Phase 8 — training curves")
     ap.add_argument("--out", default="docs/assets/training_curves.png")
     args = ap.parse_args()
 
@@ -60,18 +60,18 @@ def main() -> None:
         ax2.plot(eps, hs, color=color, lw=1.7, label=label)
         plotted.append((label, color, eps, costs))
 
-    # --- события ---
+    # --- events ---
     if plotted:
-        # Phase 6: loss sign-fix (+Σlogπ) снял коллапс — начало здорового спуска
+        # Phase 6: the loss sign-fix (+Σlogπ) removed the collapse — start of a healthy descent
         p6 = next((p for p in plotted if "REINFORCE" in p[0]), None)
         if p6:
             ax1.annotate(
-                "loss sign-fix +Σlogπ\n(коллапс Phase 6 снят)",
+                "loss sign-fix +Σlogπ\n(Phase 6 collapse removed)",
                 xy=(p6[2][0], p6[3][0]), xytext=(8, -38), textcoords="offset points",
                 fontsize=7.5, color=p6[1],
                 arrowprops=dict(arrowstyle="->", color=p6[1], lw=0.9),
             )
-        # early-stop на конце congestion/residual + гейт FAIL на residual
+        # early-stop at the end of congestion/residual + the gate FAIL on residual
         for label, color, eps, costs in plotted:
             if "Path A" in label or "Path B" in label:
                 ax1.axvline(eps[-1], color=color, ls=":", lw=1.0, alpha=0.6)
@@ -83,12 +83,12 @@ def main() -> None:
                 )
 
     ax1.set_ylabel("train cost, €")
-    ax1.set_title("Кривые обучения — cost / epoch (Phase 6 → POMO → Path A → Path B)")
+    ax1.set_title("Training curves — cost / epoch (Phase 6 → POMO → Path A → Path B)")
     ax1.grid(alpha=0.3)
     ax1.legend(fontsize=8, loc="upper right")
-    ax2.set_ylabel("энтропия политики H")
-    ax2.set_xlabel("epoch (внутри фазы)")
-    ax2.set_title("Энтропия — здоровье обучения (не 0 = нет коллапса, не max = учится)")
+    ax2.set_ylabel("policy entropy H")
+    ax2.set_xlabel("epoch (within the phase)")
+    ax2.set_title("Entropy — training health (not 0 = no collapse, not max = still learning)")
     ax2.grid(alpha=0.3)
     ax2.legend(fontsize=8, loc="upper right")
     fig.tight_layout()

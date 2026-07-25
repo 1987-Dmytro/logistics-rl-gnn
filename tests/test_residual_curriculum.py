@@ -1,10 +1,10 @@
-"""Path B residual-curriculum — стражи предрегистрации 0011.
+"""Path B residual curriculum — guards of the 0011 pre-registration.
 
-Проверяем: (1) seed-дизъюнкция held-out (train/val-residual ∩ {0–9} = ∅, реализации различны);
-(2) residual не вырожден (≥3 pending, ≥2 старта, тег real+синтетика); (3) детерминизм по сиду
-(воспроизводимый val-пул); (4) POMO работает на residual БЕЗ изменений; (5) _validate даёт ОБЕ оси
-и отбирает ПО residual single-decode (== метрика гейта); (6) микс ~50/50. torch обязателен (pomo
-тянет torch); тренер/POMO — ещё torch_geometric.
+We check: (1) seed disjointness of the held-out (train/val-residual ∩ {0–9} = ∅, realisations
+differ); (2) the residual is not degenerate (≥3 pending, ≥2 starts, tag real+synthetic);
+(3) determinism by seed (a reproducible val pool); (4) POMO works on a residual UNCHANGED;
+(5) _validate yields BOTH axes and selects BY residual single decode (== the gate metric);
+(6) the mix is ~50/50. torch is required (pomo pulls torch); the trainer/POMO also torch_geometric.
 """
 
 from __future__ import annotations
@@ -35,15 +35,15 @@ _FR = (0.2, 0.8)
 
 
 def test_residual_seed_disjoint():
-    """0011 held-out: сид-диапазоны residual ∩ {0–9} = ∅; demand-реализации различны."""
+    """0011 held-out: the residual seed ranges ∩ {0–9} = ∅; demand realisations differ."""
     cfg = POMOConfig.for_residual()
     gate = set(range(10))
     assert cfg.res_train_base > 9 and cfg.res_train_base >= 3_000_000
     assert set(cfg.res_val_seeds()).isdisjoint(gate)
     assert min(cfg.res_val_seeds()) >= 4_000_000
-    # train ∩ val-residual по сидам: train база 3M+seed(<1M) ⊂ [3M,4M); val ⊂ [4M,4M+48) → ∅
+    # train ∩ val-residual by seed: train base 3M+seed(<1M) ⊂ [3M,4M); val ⊂ [4M,4M+48) → ∅
     assert cfg.res_train_base + 1_000_000 <= min(cfg.res_val_seeds())
-    # реализации спроса held-out (та же геометрия — реальный город, разный спрос по сиду)
+    # demand realisations are held out (same geometry — a real city, different demand per seed)
     s = InstanceSampler(n_range=(62, 62))
     assert not np.array_equal(
         s.sample(cfg.res_train_base).demand, s.sample(min(cfg.res_val_seeds())).demand
@@ -51,7 +51,7 @@ def test_residual_seed_disjoint():
 
 
 def test_make_residual_feasible_and_pending():
-    """residual не вырожден: ≥3 pending, ≥2 допустимых старта, тег real+синтетика (запрет №5)."""
+    """The residual is not degenerate: ≥3 pending, ≥2 allowed starts, tag real+synthetic (#5)."""
     s = InstanceSampler(n_range=(62, 62))
     r = make_residual(s, 3_000_000, dow=_DOW, base_k=_K, frac_range=_FR)
     assert len(r.inst.demand) - 1 >= 3  # pending
@@ -64,7 +64,7 @@ def test_make_residual_feasible_and_pending():
 
 
 def test_make_residual_deterministic():
-    """Тот же сид → тот же residual (воспроизводимый held-out val-пул)."""
+    """The same seed → the same residual (a reproducible held-out val pool)."""
     s = InstanceSampler(n_range=(62, 62))
     a = make_residual(s, 4_000_000, dow=_DOW, base_k=_K, frac_range=_FR)
     b = make_residual(s, 4_000_000, dow=_DOW, base_k=_K, frac_range=_FR)
@@ -73,13 +73,13 @@ def test_make_residual_deterministic():
 
 
 def test_now_for_progress_monotone():
-    """now растёт с frac (больше прогресса → позже точка среза)."""
+    """now grows with frac (more progress → a later cut point)."""
     fin = {i: float(i) for i in range(1, 11)}
     assert _now_for_progress(fin, 0.2) < _now_for_progress(fin, 0.8)
 
 
 def test_pomo_multistart_on_residual():
-    """POMO на residual БЕЗ изменений: feasible_starts = K следующих узлов → cost конечн."""
+    """POMO on a residual UNCHANGED: feasible_starts = K next nodes → cost is finite."""
     pytest.importorskip("torch_geometric")
     from logistics_rl_gnn.models.policy import VRPPolicy
     from logistics_rl_gnn.train.pomo import multistart_greedy
@@ -93,7 +93,7 @@ def test_pomo_multistart_on_residual():
 
 
 def _tiny_trainer():
-    """Лёгкий ResidualPOMOTrainer (2 full-val + 2 res-val) для проверки проводки."""
+    """A light ResidualPOMOTrainer (2 full-val + 2 res-val) to check the wiring."""
     pytest.importorskip("torch_geometric")
     from logistics_rl_gnn.models.policy import VRPPolicy
     from logistics_rl_gnn.train.residual_curriculum import ResidualPOMOTrainer
@@ -109,18 +109,18 @@ def _tiny_trainer():
 
 
 def test_validate_both_axes_and_residual_selection():
-    """_validate: обе оси; val_cost == residual single-decode (метрика отбора == метрика гейта)."""
+    """_validate: both axes; val_cost == residual single decode (selection metric == gate)."""
     trainer, _ = _tiny_trainer()
     rec = trainer._validate()
-    assert "val_res_cost" in rec and "val_full_cost" in rec  # обе оси
-    assert rec["val_cost"] == rec["val_res_cost"]  # ОТБОР ПО residual (0011)
+    assert "val_res_cost" in rec and "val_full_cost" in rec  # both axes
+    assert rec["val_cost"] == rec["val_res_cost"]  # SELECTION BY residual (0011)
     man = float(np.mean([single_decode_cost(trainer.policy, e) for e in trainer.val_res_envs]))
-    assert abs(rec["val_res_cost"] - man) < 1e-6  # == single-decode (== rl_raw гейта)
-    assert trainer.val_res_heur > 0  # greedy-референс (== greedy_raw гейта) построен
+    assert abs(rec["val_res_cost"] - man) < 1e-6  # == single decode (== the gate's rl_raw)
+    assert trainer.val_res_heur > 0  # the greedy reference (== the gate's greedy_raw) is built
 
 
 def test_batch_mix_ratio():
-    """Микс ~50/50 (seeded): доля residual-эпизодов (meta.dynamic) близка к residual_frac."""
+    """A ~50/50 mix (seeded): the share of residual episodes (meta.dynamic) ≈ residual_frac."""
     trainer, _ = _tiny_trainer()
     dyn = []
     for s in range(30):
@@ -130,7 +130,7 @@ def test_batch_mix_ratio():
 
 
 def test_greedy_cost_matches_scorer():
-    """greedy_cost — тот же evaluate_solution под travel (== greedy_raw гейта)."""
+    """greedy_cost — the same evaluate_solution under travel (== the gate's greedy_raw)."""
     from logistics_rl_gnn.baselines.greedy import greedy_routes
     from logistics_rl_gnn.env.scoring import evaluate_solution
 

@@ -1,20 +1,20 @@
-# logistics-rl-gnn — dev-таргеты (just <target>)
+# logistics-rl-gnn — dev targets (just <target>)
 
-# Установить проект с dev-зависимостями
+# Install the project with dev dependencies
 install:
     pip install -e ".[dev]"
 
-# Прогнать тесты
+# Run the tests
 test:
     pytest -q
 
-# Линт
+# Lint
 lint:
     ruff check .
 
-# Формат
+# Format
 fmt:
     ruff format .
 
-# Линт + тесты (CI-гейт)
+# Lint + tests (the CI gate)
 check: lint test

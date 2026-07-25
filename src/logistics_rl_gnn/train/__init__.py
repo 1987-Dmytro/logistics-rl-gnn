@@ -1,1 +1,1 @@
-"""Phase 6: REINFORCE — обучение политики с бейзлайном."""
+"""Phase 6: REINFORCE — policy training with a baseline."""

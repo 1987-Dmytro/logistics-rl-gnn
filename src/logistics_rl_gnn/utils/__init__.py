@@ -1,1 +1,1 @@
-"""Утилиты: seed-фиксация, логирование, geo-хелперы."""
+"""Utilities: seed pinning, logging, geo helpers."""

@@ -1,8 +1,8 @@
-"""Прогон бейзлайнов «Было»: greedy + OR-Tools на N сидов, единый оценщик, mean±std.
+"""Baseline "before" run: greedy + OR-Tools over N seeds, single scorer, mean±std.
 
-Запуск:  python scripts/run_baselines.py [--seeds 10] [--time-limit 30]
-Печатает таблицу «Было» (пробег/время/машины/on-time/unserved/reward) и пишет сводку
-results/baselines.json (config+seeds+версии → воспроизводимость, запрет №4).
+Run:  python scripts/run_baselines.py [--seeds 10] [--time-limit 30]
+Prints the "before" table (distance/time/vehicles/on-time/unserved/reward) and writes the summary
+results/baselines.json (config+seeds+versions → reproducibility, prohibition #4).
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ from logistics_rl_gnn.env.scoring import CostConfig, evaluate_solution
 
 _METRICS = ["distance_km", "time_min", "vehicles_used", "on_time_pct", "unserved", "reward"]
 _COLS = [
-    ("пробег,км", "distance_km"),
-    ("время,мин", "time_min"),
-    ("машин", "vehicles_used"),
+    ("distance,km", "distance_km"),
+    ("time,min", "time_min"),
+    ("vehicles", "vehicles_used"),
     ("on-time,%", "on_time_pct"),
     ("unserved", "unserved"),
     ("reward,€", "reward"),
@@ -82,11 +82,11 @@ def _fmt(name: str, agg: dict) -> str:
 def print_table(res: dict) -> None:
     c = res["config"]
     print(
-        f"\n«Было» — K={c['fleet_size']} Q={c['vehicle_cap']} T_max={c['t_max_min']:.0f}мин | "
+        f"\n'Before' — K={c['fleet_size']} Q={c['vehicle_cap']} T_max={c['t_max_min']:.0f}min | "
         f"seeds={res['run']['seeds']} | OR-Tools {res['run']['ortools_version']} "
-        f"@ {res['run']['ortools_time_limit_s']}с"
+        f"@ {res['run']['ortools_time_limit_s']}s"
     )
-    header = f"{'метод':<9}  " + "  ".join(f"{h:>15}" for h, _ in _COLS)
+    header = f"{'method':<9}  " + "  ".join(f"{h:>15}" for h, _ in _COLS)
     print(header)
     print("-" * len(header))
     print(_fmt("greedy", res["greedy"]["agg"]))
@@ -94,19 +94,19 @@ def print_table(res: dict) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Бейзлайны CVRPTW «Было»")
-    ap.add_argument("--seeds", type=int, default=10, help="число сидов (0..N-1)")
-    ap.add_argument("--time-limit", type=int, default=30, help="бюджет OR-Tools, сек/сид")
+    ap = argparse.ArgumentParser(description="CVRPTW baselines ('before')")
+    ap.add_argument("--seeds", type=int, default=10, help="number of seeds (0..N-1)")
+    ap.add_argument("--time-limit", type=int, default=30, help="OR-Tools budget, s/seed")
     ap.add_argument("--out", type=Path, default=Path("results/baselines.json"))
     args = ap.parse_args()
     if args.seeds < 1 or args.time_limit < 1:
-        ap.error("--seeds и --time-limit должны быть >= 1")  # иначе пустая агрегация → NaN в JSON
+        ap.error("--seeds and --time-limit must be >= 1")  # else empty aggregation → NaN in JSON
 
     res = run(list(range(args.seeds)), args.time_limit)
     print_table(res)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(res, indent=2, ensure_ascii=False))
-    print(f"\nсводка → {args.out}")
+    print(f"\nsummary → {args.out}")
 
 
 if __name__ == "__main__":

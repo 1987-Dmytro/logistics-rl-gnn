@@ -1,9 +1,9 @@
-"""Модель времени в пути. Интерфейс TravelModel + FreeFlowTravel (Phase 3) +
+"""Travel-time model. The TravelModel interface + FreeFlowTravel (Phase 3) +
 CongestionTravel (Phase 7).
 
-CongestionTravel — тот же интерфейс, но at_minute влияет на время: диурнальный множитель
-c(dow,h) × вклад инцидентов. Drop-in: подменяется через env.travel (в dynamic-env
-переживает reset). Единица — минуты.
+CongestionTravel — the same interface, but at_minute affects the time: a diurnal multiplier
+c(dow,h) × the incident contribution. Drop-in: swapped through env.travel (survives reset in
+the dynamic env). The unit is minutes.
 """
 
 from __future__ import annotations
@@ -16,24 +16,24 @@ import numpy as np
 from logistics_rl_gnn.config import congestion as cg
 from logistics_rl_gnn.config.instance import DISPATCH_OPEN_H
 
-_CLOSED_LEVEL = 5.0  # node-уровень «рядом закрытие» (конечный сентинел вместо inf у ребра)
+_CLOSED_LEVEL = 5.0  # node level for "a closure nearby" (finite sentinel instead of edge inf)
 
 
 class TravelModel:
-    """Интерфейс: время в пути i→j (мин) при отправлении в at_minute (мин от старта)."""
+    """Interface: travel time i→j (min) when departing at at_minute (min from the start)."""
 
-    offset_min: float = 0.0  # сдвиг старта тура в абс-время дня (0 для статик/free-flow)
+    offset_min: float = 0.0  # tour start shift into absolute time of day (0 for static/free-flow)
 
     def time(self, i: int, j: int, at_minute: float) -> float:
         raise NotImplementedError
 
     def node_congestion(self, coords, at_minute: float = 0.0) -> np.ndarray:
-        """Congestion у каждого узла (0 = free-flow / нет активного инцидента). База → нули."""
+        """Congestion at every node (0 = free-flow / no active incident). Base → zeros."""
         return np.zeros(len(coords), dtype=np.float32)
 
 
 class FreeFlowTravel(TravelModel):
-    """Free-flow: время не зависит от at_minute (Phase 3) → time_m[i, j]."""
+    """Free-flow: time does not depend on at_minute (Phase 3) → time_m[i, j]."""
 
     def __init__(self, time_m_min: np.ndarray):
         self.time_m = np.asarray(time_m_min, dtype=float)
@@ -42,14 +42,14 @@ class FreeFlowTravel(TravelModel):
         return float(self.time_m[i, j])
 
     def matrix(self, at_minute: float = 0.0) -> np.ndarray:
-        """Вся матрица времени (мин) — free-flow не зависит от времени → t0."""
+        """The whole time matrix (min) — free-flow is time-independent → t0."""
         return self.time_m
 
 
 def _km(a: tuple[float, float], b: tuple[float, float]) -> float:
-    """Приближённое расстояние lon/lat → км (локальная плоская аппроксимация, Augsburg ~48.4°).
+    """Approximate lon/lat distance → km (local flat approximation, Augsburg ~48.4°).
 
-    ponytail: flat-earth ок для зоны радиусом 1–2 км; для города точнее не нужно.
+    ponytail: flat-earth is fine for a zone of radius 1–2 km; a city needs no more precision.
     """
     lat = math.radians((a[1] + b[1]) / 2.0)
     dlon = (a[0] - b[0]) * 111.320 * math.cos(lat)
@@ -58,13 +58,13 @@ def _km(a: tuple[float, float], b: tuple[float, float]) -> float:
 
 
 def _km_to_center(coords: np.ndarray, center: tuple[float, float]) -> np.ndarray:
-    """Векторно расстояние (км) от каждого узла до center — ТОЧНО как _km (per-node midpoint-lat).
+    """Vectorised distance (km) from every node to center — EXACTLY as _km (per-node midpoint lat).
 
-    Совпадать с _km обязательно: узел у границы зоны иначе флипнет in/out (тихий баг). -> [k].
+    Matching _km is mandatory: else a node on the zone boundary flips in/out (silent bug). -> [k].
     """
     coords = np.asarray(coords, dtype=float)
     clon, clat = float(center[0]), float(center[1])
-    midlat = np.radians((clat + coords[:, 1]) / 2.0)  # per-node середина, как в _km
+    midlat = np.radians((clat + coords[:, 1]) / 2.0)  # per-node midpoint, as in _km
     dlon = (clon - coords[:, 0]) * 111.320 * np.cos(midlat)
     dlat = (clat - coords[:, 1]) * 110.574
     return np.hypot(dlon, dlat)
@@ -72,21 +72,21 @@ def _km_to_center(coords: np.ndarray, center: tuple[float, float]) -> np.ndarray
 
 @dataclass
 class Incident:
-    """Локальный инцидент: зона (центр-коорд + радиус) × окно времени × магнитуда.
+    """A local incident: zone (centre coordinate + radius) × time window × magnitude.
 
-    Геометрия по координатам (не по индексу узла) → переживает срез инстанса при re-plan.
-    magnitude=inf → закрытие (ребро удаляется). Затухание линейное к концу длительности.
-    Время в АБСОЛЮТНЫХ минутах от dispatch-open (как at_minute+offset в CongestionTravel).
+    Geometry is coordinate-based (not node-index) → it survives the instance slice on re-plan.
+    magnitude=inf → closure (the edge is removed). Decay is linear towards the end of duration.
+    Time is in ABSOLUTE minutes from dispatch-open (as at_minute+offset in CongestionTravel).
     """
 
     center: tuple[float, float]  # (lon, lat)
     radius_km: float
-    magnitude: float  # δ; inf = закрытие ребра
+    magnitude: float  # δ; inf = edge closure
     t_start_min: float
     duration_min: float
 
     def contrib(self, coord_i, coord_j, abs_min: float) -> float:
-        """Вклад в (1+Σ) на ребре i→j в момент abs_min: δ·decay, inf при закрытии, иначе 0."""
+        """Contribution to (1+Σ) on edge i→j at abs_min: δ·decay, inf on closure, else 0."""
         if not (self.t_start_min <= abs_min <= self.t_start_min + self.duration_min):
             return 0.0
         in_zone = (
@@ -97,12 +97,13 @@ class Incident:
             return 0.0
         if math.isinf(self.magnitude):
             return math.inf
-        decay = 1.0 - (abs_min - self.t_start_min) / self.duration_min  # 1→0 линейно
+        decay = 1.0 - (abs_min - self.t_start_min) / self.duration_min  # 1→0 linearly
         return self.magnitude * decay
 
     def at_node(self, coord, abs_min: float) -> float:
-        """Вклад на УЗЕЛ (центр в зоне): δ·decay если активен и узел в радиусе; _CLOSED_LEVEL
-        при закрытии; иначе 0. Конечный (в отличие от inf у contrib) — фича узла не бесконечна."""
+        """Contribution to a NODE (centre in the zone): δ·decay if active and the node is inside
+        the radius; _CLOSED_LEVEL on closure; else 0. Finite (unlike contrib's inf) — a node
+        feature is never infinite."""
         if not (self.t_start_min <= abs_min <= self.t_start_min + self.duration_min):
             return 0.0
         if _km(self.center, tuple(coord)) > self.radius_km:
@@ -113,10 +114,10 @@ class Incident:
 
 
 def time_context(abs_min: float, dow: int) -> np.ndarray:
-    """Циклический контекст времени: [sin_h, cos_h, sin_dow, cos_dow], h = DISPATCH_OPEN_H+abs/60.
+    """Cyclic time context: [sin_h, cos_h, sin_dow, cos_dow], h = DISPATCH_OPEN_H+abs/60.
 
-    Фаза дня (для диурнального congestion) + день недели. Ненулевой и под free-flow — но это
-    ПОСТОЯННЫЙ вход без congestion-сигнала при c≡1, сходимости не мешает (Phase 6b Шаг 0).
+    Phase of the day (for diurnal congestion) + weekday. Non-zero under free-flow too — but that
+    is a CONSTANT input with no congestion signal at c≡1, harmless to convergence (Phase 6b Step 0).
     """
     hour = DISPATCH_OPEN_H + abs_min / 60.0
     ah = 2.0 * math.pi * hour / 24.0
@@ -127,9 +128,9 @@ def time_context(abs_min: float, dow: int) -> np.ndarray:
 class CongestionTravel(TravelModel):
     """t(i,j,at) = t0[i,j]·c(dow, h) · (1 + Σ_k I_k), h = DISPATCH_OPEN_H + (offset+at)/60.
 
-    offset_min — сдвиг времени старта тура (для residual re-plan: событие в середине дня →
-    туры начинаются в реальный час). incidents — список Incident (геометрия по coords).
-    Паритет: c≡1 (передан flat_c=True) И нет инцидентов ⇒ ровно FreeFlow (t0[i,j]).
+    offset_min — shift of the tour start time (for a residual re-plan: a midday event → tours
+    begin at the real hour). incidents — a list of Incident (geometry from coords).
+    Parity: c≡1 (flat_c=True passed) AND no incidents ⇒ exactly FreeFlow (t0[i,j]).
     """
 
     def __init__(
@@ -147,7 +148,7 @@ class CongestionTravel(TravelModel):
         self.dow = int(dow)
         self.offset_min = float(offset_min)
         self.incidents = list(incidents or [])
-        self.flat_c = bool(flat_c)  # тест-паритет: отключить диурнал (c≡1)
+        self.flat_c = bool(flat_c)  # test parity: disable the diurnal (c≡1)
 
     def time(self, i: int, j: int, at_minute: float = 0.0) -> float:
         t0 = float(self.time_m[i, j])
@@ -157,16 +158,16 @@ class CongestionTravel(TravelModel):
         for k in self.incidents:
             d = k.contrib(self.coords[i], self.coords[j], abs_min)
             if math.isinf(d):
-                return math.inf  # закрытие ребра → недостижимо (маскируется в env)
+                return math.inf  # edge closure → unreachable (masked in the env)
             inc += d
         return t0 * c * (1.0 + inc)
 
     def matrix(self, at_minute: float = 0.0) -> np.ndarray:
-        """Вся матрица t(i,j,at) одним шотом (векторно) — ТОЧНЫЙ паритет с поэлементным time().
+        """The whole matrix t(i,j,at) in one shot (vectorised) — EXACT parity with time().
 
-        Зоны инцидентов через outer-OR булевых масок узлов; закрытие → inf на ребре (union по
-        всем closure-инцидентам, поверх любых конечных вкладов — как early-return inf у time()).
-        build_graph зовёт это (k² Python-вызовов time() душат POMO-ретрейн при k=62).
+        Incident zones via an outer-OR of boolean node masks; closure → inf on the edge (union over
+        all closure incidents, on top of any finite contributions — as time()'s early-return inf).
+        build_graph calls this (k² Python time() calls choke the POMO retrain at k=62).
         """
         abs_min = self.offset_min + at_minute
         c = 1.0 if self.flat_c else cg.congestion(self.dow, DISPATCH_OPEN_H + abs_min / 60.0)
@@ -178,19 +179,19 @@ class CongestionTravel(TravelModel):
         closed = np.zeros((k, k), dtype=bool)
         for ic in self.incidents:
             if not (ic.t_start_min <= abs_min <= ic.t_start_min + ic.duration_min):
-                continue  # вне окна инцидента — вклад 0 (как contrib())
-            zone = _km_to_center(self.coords, ic.center) <= ic.radius_km  # [k] узлов в зоне
-            edge_zone = zone[:, None] | zone[None, :]  # ребро задето, если i ИЛИ j в зоне
+                continue  # outside the incident window — contribution 0 (as in contrib())
+            zone = _km_to_center(self.coords, ic.center) <= ic.radius_km  # [k] nodes in zone
+            edge_zone = zone[:, None] | zone[None, :]  # the edge is hit if i OR j is in the zone
             if math.isinf(ic.magnitude):
                 closed |= edge_zone
             else:
-                decay = 1.0 - (abs_min - ic.t_start_min) / ic.duration_min  # 1→0 линейно
+                decay = 1.0 - (abs_min - ic.t_start_min) / ic.duration_min  # 1→0 linearly
                 inc += np.where(edge_zone, ic.magnitude * decay, 0.0)
         tm = tm * (1.0 + inc)
-        return np.where(closed, np.inf, tm)  # закрытие перекрывает конечные вклады (== time())
+        return np.where(closed, np.inf, tm)  # closure overrides finite contributions (== time())
 
     def node_congestion(self, coords, at_minute: float = 0.0) -> np.ndarray:
-        """max по инцидентам вклада на узел (0 без активных инцидентов) — конечный уровень."""
+        """max over incidents of the node contribution (0 without active incidents) — finite."""
         coords = np.asarray(coords, dtype=float)
         abs_min = self.offset_min + at_minute
         out = np.zeros(len(coords), dtype=np.float32)
