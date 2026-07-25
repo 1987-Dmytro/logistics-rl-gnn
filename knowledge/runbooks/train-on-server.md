@@ -5,109 +5,114 @@ date: 2026-07-21
 tags: [runbook, training, server, pomo, phase6b]
 ---
 
-# Обучение на Ryzen-сервере (NJ)
+# Training on the Ryzen server (NJ)
 
-**Назначение:** воспроизводимый полный прогон обучения (POMO / dynamic) на сервере NJ
-(Ryzen 9 9900X, 12C/24T, 96 ГБ, CPU-only). Код едет с мака через git, данные — rsync'ом,
-запуск в tmux, веса и метрики забираем обратно. Мак — только для smoke; полные прогоны здесь.
+**Purpose:** a reproducible full training run (POMO / dynamic) on the NJ server
+(Ryzen 9 9900X, 12C/24T, 96 GB, CPU-only). The code travels from the Mac via git, the data via rsync,
+the run happens in tmux, and the weights and metrics come back. The Mac is for smoke runs only; full runs
+happen here.
 
-> **Переменные окружения (задать под себя):**
-> `SERVER` — SSH-хост сервера · `REPO=~/logistics-rl-gnn` — путь репо на сервере ·
-> `SNAP=augsburg_20260720` — активный снапшот данных · `TRAIN=scripts/train_pomo.py` —
-> актуальный train-скрипт фазы (для Шага 2 заменить на dynamic-раннер).
+> **Environment variables (set them for yourself):**
+> `SERVER` — the server's SSH host · `REPO=~/logistics-rl-gnn` — the repo path on the server ·
+> `SNAP=augsburg_20260720` — the active data snapshot · `TRAIN=scripts/train_pomo.py` —
+> the phase's current train script (for Step 2 replace it with the dynamic runner).
 
-## Предусловия
+## Preconditions
 
-- `ssh $SERVER` работает.
-- Актуальный коммит **запушен** с мака (сервер тянет версию из истории, не рабочее дерево).
-- На маке собран снапшот `data/snapshots/$SNAP/` (иначе — Phase 2 `scripts/build_snapshot.py`).
+- `ssh $SERVER` works.
+- The current commit is **pushed** from the Mac (the server pulls a version from history, not the working tree).
+- The snapshot `data/snapshots/$SNAP/` is built on the Mac (otherwise — Phase 2 `scripts/build_snapshot.py`).
 
-## Шаги
+## Steps
 
-### 1. Синхронизировать код (git)
+### 1. Synchronise the code (git)
 
 ```bash
-# на маке
+# on the Mac
 git push
-# на сервере
+# on the server
 ssh $SERVER
 cd $REPO && git pull
 ```
 
-### 2. Синхронизировать данные (rsync — снапшот вне git)
+### 2. Synchronise the data (rsync — the snapshot is outside git)
 
-Снапшот в gitignore (запрет №1), переносим явно. Так гарантируем **идентичные** данные:
-ре-билд заново дёрнул бы OSM и мог разойтись → сломал бы сравнение с бейзлайнами.
+The snapshot is gitignored (prohibition #1), so we transfer it explicitly. This guarantees the data are
+**identical**: rebuilding would hit OSM again and could diverge → breaking the comparison with baselines.
 
 ```bash
-# на маке
+# on the Mac
 rsync -av data/snapshots/$SNAP/  "$SERVER:$REPO/data/snapshots/$SNAP/"
 ```
 
-### 3. Окружение (один раз)
+### 3. The environment (once)
 
 ```bash
-# на сервере, в $REPO
+# on the server, in $REPO
 python -m venv .venv && source .venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU-колёса (AMD)
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU wheels (AMD)
 pip install -e ".[data,env,baselines,model]"
 ```
 
-### 4. Паритет среды
+### 4. Environment parity
 
 ```bash
-pytest -q     # тот же зелёный, что на маке — подтверждает, что версия и окружение сходятся
+pytest -q     # the same green as on the Mac — it confirms the version and environment agree
 ```
 
-### 5. Запуск в tmux
+### 5. Launch in tmux
 
 ```bash
 tmux new -s train
-# потоки = физические ядра (12); сравнить 12 vs 24 (SMT) на своей нагрузке
+# threads = physical cores (12); compare 12 vs 24 (SMT) on your own load
 OMP_NUM_THREADS=12 python -u $TRAIN 2>&1 | tee results/pomo_$(date +%Y%m%d).log
-# Ctrl-b d — отцепиться (прогон живёт дальше); tmux attach -t train — вернуться
+# Ctrl-b d — detach (the run keeps going); tmux attach -t train — come back
 ```
 
-Сервер не засыпает — `caffeinate` не нужен (в отличие от мака-Air).
+The server never sleeps — `caffeinate` is not needed (unlike on the MacBook Air).
 
-### 6. Мониторинг
+### 6. Monitoring
 
 ```bash
 tail -f results/pomo_*.log  # ep N|train(g±%)|val(g±%[OR±%])|mem±%|H||g||std|es N/patience|fr HASH
 ```
 
-Здоровые признаки: `train g↓` · `|g|>0` · энтропия не 0 и не максимум · `std>0` (shared baseline не
-вырожден) · `fr` (хеш инстансов) меняется каждую эпоху (RNG свеж, не повтор драйвов) · `mem` НЕ растёт
-монотонно (растёт = memorization: train↓ при застывшем val). **Гейт
-первых ~15 эпох:** если `val` плоский (в пределах шума) с ~эпохи 3 и `es` только копится, не улучшаясь
-→ сигнал отбора слаб (val насытился у эвристики, как в прошлом прогоне) → поднять `val_n_range=(62,62)`
-(лычаг в config/pomo.py — val/test на deployment-размере) и перезапустить. `es N/patience` → early-stop.
+Healthy signs: `train g↓` · `|g|>0` · entropy neither 0 nor maximal · `std>0` (the shared baseline is not
+degenerate) · `fr` (the instance hash) changes every epoch (the RNG is fresh, the draws do not repeat) ·
+`mem` does NOT grow monotonically (growth = memorisation: train↓ with a frozen val). **The gate for the
+first ~15 epochs:** if `val` is flat (within the noise) from about epoch 3 and `es` only accumulates without
+improving → the selection signal is weak (val saturated at the heuristic, as in the previous run) → raise
+`val_n_range=(62,62)` (the lever in config/pomo.py — val/test at the deployment size) and restart.
+`es N/patience` → early-stop.
 
-### 7. Забрать результат
+### 7. Collect the result
 
 ```bash
-# на маке (refit пишет policy_pomo_refit.pt — glob заберёт и его, и старый best 770.4€)
+# on the Mac (the refit writes policy_pomo_refit.pt — the glob takes it and the old best 770.4€)
 rsync -av "$SERVER:$REPO/results/policy_pomo_*.pt"  results/
 rsync -av "$SERVER:$REPO/results/pomo_*.log"        results/
 ```
 
-Веса вне git (запрет №1) → в git коммитим только метрики/сводку + decision с числами. Refit пишет в
-`policy_pomo_refit.pt` — старый `policy_pomo_best.pt` (770.4€) НЕ затирается (нужен для сравнения).
+The weights stay outside git (prohibition #1) → only metrics/the summary + a decision with the numbers are
+committed. The refit writes into `policy_pomo_refit.pt` — the old `policy_pomo_best.pt` (770.4€) is NOT
+overwritten (it is needed for comparison).
 
-## Воспроизводимость (обязательно)
+## Reproducibility (mandatory)
 
-Рядом с весами залогировать: `seed`, config (N_starts / epochs / lr / clip), версии
-(`torch`, `torch-geometric`, `ortools`) — по образцу `results/baselines.json`.
-Без этого прогон не повторить, и «Стало» нельзя защитить.
+Log next to the weights: `seed`, the config (N_starts / epochs / lr / clip), the versions
+(`torch`, `torch-geometric`, `ortools`) — following the pattern of `results/baselines.json`.
+Without that the run cannot be repeated and the "after" cannot be defended.
 
 ## Troubleshooting
 
-- **torch тянет CUDA/тяжёлую сборку** → ставить строго с `--index-url …/whl/cpu` **до** `pip install -e`.
-- **torch-geometric не собирается** → сначала torch (CPU), затем PyG; сверить совместимость версий.
-- **Медленно / троттлит** → тюнинг `OMP_NUM_THREADS` (12 физических обычно лучше 24 c SMT); `htop` — следить, что не свопит.
-- **`pytest` красный на сервере, зелёный на маке** → разошлись версии: сверить `pip freeze` ключевых пакетов, пересобрать `.venv`.
+- **torch pulls CUDA/a heavy build** → install strictly with `--index-url …/whl/cpu` **before** `pip install -e`.
+- **torch-geometric does not build** → torch first (CPU), then PyG; check the version compatibility.
+- **Slow / throttling** → tune `OMP_NUM_THREADS` (12 physical cores usually beat 24 with SMT); use `htop` to
+  make sure it is not swapping.
+- **`pytest` red on the server, green on the Mac** → the versions diverged: compare `pip freeze` for the key
+  packages, rebuild `.venv`.
 
-## Связи
+## Links
 
-- Обучение: [[0006-pomo-static]] · [[0003-phase6-training]]
-- Данные/снапшот: [[0001-mdp-spec]] (Phase 2)
+- Training: [[0006-pomo-static]] · [[0003-phase6-training]]
+- Data/snapshot: [[0001-mdp-spec]] (Phase 2)

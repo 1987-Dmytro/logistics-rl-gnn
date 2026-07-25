@@ -1,6 +1,6 @@
 # Goals INDEX — logistics-rl-gnn
 
-Реестр только `proposed|active` целей; завершённые уезжают в `_archive/` (строка удаляется).
+A registry of `proposed|active` goals only; completed ones move to `_archive/` (the row is deleted).
 
-| Goal | Статус | Doc | Exit-gate |
+| Goal | Status | Doc | Exit gate |
 |---|---|---|---|

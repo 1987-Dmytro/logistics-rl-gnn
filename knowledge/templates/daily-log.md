@@ -6,7 +6,7 @@ tags: [daily]
 
 # 2026-07-20
 
-## Сводка
-<!-- что сделано (конкретные результаты), решения, блокеры; связи — [[wikilinks]] -->
+## Summary
+<!-- what was done (concrete results), decisions, blockers; links — [[wikilinks]] -->
 
 ## Sessions

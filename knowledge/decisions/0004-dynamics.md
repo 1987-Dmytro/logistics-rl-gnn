@@ -6,78 +6,80 @@ status: accepted
 tags: [decision, dynamic, congestion, replan, cvrptw, latency, phase7]
 ---
 
-# 0004 — Динамика + re-plan: «Стало по скорости реакции» (Phase 7)
+# 0004 — Dynamics + re-plan: the "after" on reaction speed (Phase 7)
 
-**Контекст:** dec-0001 §4 — онлайн-перестроение при пробках/поломках/срочных заказах. Цель
-Phase 7: латентность re-plan ≪ re-solve OR-Tools **при сравнимой стоимости** (dec-0001 §5).
-Реюз travel-интерфейса Phase 3 (drop-in) — env НЕ переписан.
+**Context:** dec-0001 §4 — online re-planning on jams/breakdowns/urgent orders. The Phase 7 goal:
+re-plan latency ≪ an OR-Tools re-solve **at comparable cost** (dec-0001 §5).
+The Phase 3 travel interface is reused (drop-in) — the env was NOT rewritten.
 
-## Что построено
+## What was built
 
-1. **CongestionTravel** (`env/travel.py`, тот же интерфейс `time(i,j,at)`):
-   `t = t0·c(dow,h) · (1 + Σ_k I_k)`, `h = 08 + (offset+at)/60`. Инциденты **геометрические**
-   (центр-коорд + радиус) → переживают срез инстанса. Паритет: `c≡1` + 0 инцидентов ⇒ ровно
-   FreeFlow (тест). `c(dow,h)` — городской профиль, калибровка по форме TomTom Augsburg
-   (пики 08/17), тег `simulated-on-real` (`config/congestion.py`).
-2. **События** (`env/events.py`): traffic (инцидент), breakdown (−машина, стопы → пул),
-   urgent (аптека с узким окном); плавный диурнал — НЕ триггер. Seeded-поток.
-3. **Drop-in без переписывания env**: `DynamicVRPEnv(VRPEnv)` переопределяет `_load` → travel
-   переживает внутренний `reset()` (rollout/greedy сбрасывают среду). Base env не тронут.
-4. **evaluate_solution(travel=…)**: congestion-aware время (backward-compatible, дефолт free-flow).
-5. **replan/compare.py**: re-plan residual (депо + необслуженные + срочные, окна сдвинуты в базу
-   события) каждым методом; латентность (warmup + медиана, end-to-end) + качество (единый оценщик).
+1. **CongestionTravel** (`env/travel.py`, the same `time(i,j,at)` interface):
+   `t = t0·c(dow,h) · (1 + Σ_k I_k)`, `h = 08 + (offset+at)/60`. Incidents are **geometric**
+   (centre coordinate + radius) → they survive an instance slice. Parity: `c≡1` + 0 incidents ⇒
+   exactly FreeFlow (tested). `c(dow,h)` is an urban profile calibrated against the shape of the
+   TomTom Augsburg curve (peaks 08/17), tagged `simulated-on-real` (`config/congestion.py`).
+2. **Events** (`env/events.py`): traffic (an incident), breakdown (−a vehicle, its stops → the pool),
+   urgent (a pharmacy with a narrow window); the smooth diurnal is NOT a trigger. A seeded stream.
+3. **Drop-in without rewriting the env**: `DynamicVRPEnv(VRPEnv)` overrides `_load` → travel
+   survives the internal `reset()` (rollout/greedy reset the env). The base env is untouched.
+4. **evaluate_solution(travel=…)**: congestion-aware time (backward-compatible, free-flow by default).
+5. **replan/compare.py**: re-plan the residual (depot + unserved + urgent, windows shifted into the
+   event's base) with each method; latency (warmup + median, end-to-end) + quality (the single scorer).
 
-## Таблица «Стало по скорости реакции» (2 сида × 6 событий, deadline OR-Tools 2с)
+## The "after on reaction speed" table (2 seeds × 6 events, OR-Tools deadline 2s)
 
-`residual re-plan, mean по событиям · results/dynamic.json (вне git)`
+`residual re-plan, mean over events · results/dynamic.json (outside git)`
 
-| метод    | латентность (медиана) | cost,€ | on-time,% | unserved | × медленнее RL |
-|----------|-----------------------|--------|-----------|----------|----------------|
-| greedy   | 7.8 мс                | 446.1  | 100.0     | 0.00     | 0×             |
-| RL       | 20.3 мс               | 450.6  | 100.0     | 0.00     | 1×             |
-| OR-Tools | 2001 мс               | 487.3  | 100.0     | 0.60     | **98×**        |
+| method   | latency (median) | cost,€ | on-time,% | unserved | × slower than RL |
+|----------|------------------|--------|-----------|----------|------------------|
+| greedy   | 7.8 ms           | 446.1  | 100.0     | 0.00     | 0×               |
+| RL       | 20.3 ms          | 450.6  | 100.0     | 0.00     | 1×               |
+| OR-Tools | 2001 ms          | 487.3  | 100.0     | 0.60     | **98×**          |
 
-## Вывод (таблица + честная нюансировка — НЕ переклаиваем)
+## Conclusion (the table plus an honest nuance — we do NOT overclaim)
 
-- **ГЛАВНЫЙ ГЕЙТ взят и робастен: RL реагирует ×98 быстрее OR-Tools (20мс vs 2с), суб-100мс
-  абсолютно.** Это forward-pass без поиска — целевое свойство динамики (dec-0001 §5).
-- **Качество — event-dependent, НЕ победа RL.** OR-Tools остаётся сильнейшим оптимизатором на
-  БОЛЬШИХ residual (n=56: OR 548€ < RL 673€ — RL хуже). Агрегатный проигрыш OR-Tools в таблице
-  идёт от **static-snapshot-пессимизма**, НЕ от дедлайна (проверено: 2с→8с меняет OR 548→542€,
-  уже сошёлся): OR-Tools не видит time-dependency → snapshot замораживает congestion на пиковом
-  часе события (ratio ×1.46 сред., ×2.86 макс, без затухания инцидента/спада диурнала) → иногда
-  роняет достижимый под истинным временем стоп (+200€), раздувая среднюю стоимость. RL ≈ greedy.
-- **RL реагирует ЧЕРЕЗ feasibility, не через congestion-фичи**: `build_graph` кормит free-flow
-  рёбра, политика обучена free-flow (Phase 6) → под congestion RL **вне распределения (OOD)**.
-  Он не «объезжает пробки», а лишь соблюдает time-dependent маску. Отсюда RL хуже на больших
-  residual. Congestion-фичи + дообучение на residual → Phase 8.
+- **THE MAIN GATE is taken and robust: RL reacts ×98 faster than OR-Tools (20ms vs 2s), sub-100ms
+  in absolute terms.** This is a forward pass without search — the target property of dynamics (dec-0001 §5).
+- **Quality is event-dependent, NOT an RL win.** OR-Tools remains the strongest optimiser on
+  LARGE residuals (n=56: OR 548€ < RL 673€ — RL is worse). The aggregate OR-Tools loss in the table
+  comes from **static-snapshot pessimism**, NOT from the deadline (verified: 2s→8s moves OR 548→542€,
+  already converged): OR-Tools cannot see time-dependency → the snapshot freezes congestion at the
+  event's peak hour (ratio ×1.46 mean, ×2.86 max, with no incident decay or diurnal decline) → it
+  sometimes drops a stop that is reachable under the true time (+200€), inflating the mean cost.
+  RL ≈ greedy.
+- **RL reacts THROUGH feasibility, not through congestion features**: `build_graph` feeds free-flow
+  edges and the policy was trained free-flow (Phase 6) → under congestion RL is **out of distribution
+  (OOD)**. It does not "drive around jams", it merely respects the time-dependent mask. Hence RL is
+  worse on large residuals. Congestion features + fine-tuning on residuals → Phase 8.
 
-## Упрощения (ponytail, явные)
+## Simplifications (ponytail, explicit)
 
-- **class(e) схлопнут в один городской профиль** — OD-матрица снапшота без per-segment класса
-  (`with_graph=False`); TomTom Traffic Index и есть city-level. Upgrade: per-edge на графе.
-- **re-plan = переоптимизация оставшихся стопов от депо** со свежим T_max/машину от времени
-  события (стандартный periodic re-optimization dynamic-VRP; env не поддерживает mid-route
-  continuation). Не «продолжение с середины леги».
-- **static snapshot OR-Tools = congestion на момент re-plan** (реалистично для статик-решателя:
-  дисп берёт текущий трафик), но пессимистично (не видит спад) → см. нюанс выше.
-- **частичное состояние привязано к timeline исполняемого greedy-плана** (`served_by`), не
-  к рандому и не к пере-симуляции после каждого re-plan.
+- **class(e) is collapsed into one urban profile** — the snapshot's OD matrix has no per-segment class
+  (`with_graph=False`); the TomTom Traffic Index is itself city-level. Upgrade: per-edge on the graph.
+- **re-plan = re-optimisation of the remaining stops from the depot** with a fresh T_max/vehicle from
+  the event time (the standard periodic re-optimisation of dynamic VRP; the env does not support
+  mid-route continuation). Not a "continuation from the middle of a leg".
+- **the OR-Tools static snapshot = congestion at the moment of the re-plan** (realistic for a static
+  solver: the dispatcher takes the current traffic) but pessimistic (it cannot see the decline) → see
+  the nuance above.
+- **the partial state is tied to the timeline of the executed greedy plan** (`served_by`), not to
+  chance and not to a re-simulation after every re-plan.
 
-## Альтернативы отклонены
+## Alternatives rejected
 
-- **переписать VRPEnv под параллельные машины в wall-clock** — большая переделка ядра ради
-  mid-route continuation; periodic re-opt даёт тот же латентность/качество-замер дешевле.
-- **snapshot по среднему/прогнозному congestion** — дал бы OR-Tools лучший static-шанс, но это
-  уже форкаст (Phase 8 backlog), не честный статик-бейзлайн «здесь и сейчас».
-- **заявить «RL бьёт OR-Tools по качеству»** — неверно (event-dependent, OR сильнее на больших
-  n; агрегат искажён snapshot-пессимизмом). Публикуем латентность как хедлайн, качество — как есть.
+- **rewriting VRPEnv for parallel vehicles in wall-clock** — a large rework of the core for the sake of
+  mid-route continuation; periodic re-optimisation gives the same latency/quality measurement cheaper.
+- **a snapshot on average/forecast congestion** — it would give OR-Tools a better static chance, but
+  that is already forecasting (Phase 8 backlog), not an honest "here and now" static baseline.
+- **claiming "RL beats OR-Tools on quality"** — false (event-dependent, OR is stronger at large
+  n; the aggregate is skewed by snapshot pessimism). We publish latency as the headline and quality as is.
 
-**Воспроизводимость (запрет №4):** **латентность И качество OR-Tools — wall-clock-dependent**:
-GLS крутит соседства до дедлайна → быстрее/свободнее железо укладывает больше итераций → ДРУГОЙ
-маршрут → другой cost/on-time/unserved (проверено adversarial-ревью: тот же seed+config, 5 повторов
-→ reward −589.14 vs −587.45). Детерминировано seed+config ТОЛЬКО качество RL/greedy (+ фикс. hash
-чекпойнта). Все числа — median/mean на фикс. железе; provenance (hash `policy_best.pt` + версии
-torch/numpy/ortools + platform) в `results/dynamic.json` (запрет №4 для трассируемости артефактов).
-Тесты: паритет с FreeFlow, env_checker под congestion, события (traffic/breakdown/urgent), re-plan
-feasible, ГЛАВНЫЙ ГЕЙТ (RL-латентность на порядки < OR).
+**Reproducibility (prohibition #4):** **both latency AND quality of OR-Tools are wall-clock-dependent**:
+GLS churns neighbourhoods until the deadline → faster/idler hardware fits more iterations → a DIFFERENT
+route → different cost/on-time/unserved (verified by an adversarial review: the same seed+config, 5 repeats
+→ reward −589.14 vs −587.45). Only RL/greedy quality is deterministic from seed+config (+ a fixed
+checkpoint hash). All numbers are median/mean on fixed hardware; the provenance (hash of `policy_best.pt` +
+torch/numpy/ortools versions + platform) lives in `results/dynamic.json` (prohibition #4 for artefact
+traceability). Tests: parity with FreeFlow, env_checker under congestion, events (traffic/breakdown/urgent),
+a feasible re-plan, THE MAIN GATE (RL latency orders of magnitude below OR).

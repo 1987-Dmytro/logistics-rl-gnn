@@ -6,102 +6,104 @@ status: accepted
 tags: [decision, prereg, path-b, residual, curriculum, rl, cvrptw, phase6b]
 ---
 
-# 0011 — Path B: residual-curriculum, ПРЕДРЕГИСТРАЦИЯ (Phase 6b)
+# 0011 — Path B: residual curriculum, PRE-REGISTRATION (Phase 6b)
 
-**Это предрегистрация: гейт, правило отбора и kill-критерии зафиксированы ДО кода и ДО прогона.**
-Коммитится ОТДЕЛЬНЫМ коммитом ПЕРЕД обучающим кодом — git-таймстамп = гарантия, что цель не
-подгонялась под результат. Пост-фактум правки этого файла запрещены (только новый decision).
+**This is a pre-registration: the gate, the selection rule and the kill criteria are fixed BEFORE the code
+and BEFORE the run.** It is committed as a SEPARATE commit BEFORE the training code — the git timestamp is
+the guarantee that the target was not tuned to the result. Post-hoc edits of this file are forbidden (only a
+new decision).
 
-**Контекст:** [[0010-phase6b-ablation-latency-niche]] закрылся отрицательно — достижимый RL-старт
-(одиночный greedy-decode) на re-plan ХУЖЕ greedy (865.5 vs 851.5, выигрывает 6/25). Path B —
-единственный путь к «RL по качеству»: дообучить политику НА residual-распределении, чтобы её
-**одиночный decode** стал реально лучше greedy на re-plan. Time-boxed, один заход, честный гейт.
+**Context:** [[0010-phase6b-ablation-latency-niche]] closed negatively — the reachable RL start
+(a single greedy decode) on a re-plan is WORSE than greedy (865.5 vs 851.5, winning 6/25). Path B is
+the only route to "RL on quality": fine-tune the policy ON the residual distribution so that its
+**single decode** genuinely beats greedy on a re-plan. Time-boxed, one attempt, an honest gate.
 
-## ГЕЙТ (первичный критерий успеха — pre-registered)
+## THE GATE (the primary success criterion — pre-registered)
 
-На **25 событиях харнесса 0004** (`run_dynamic.iter_events`, `generate_instance` сиды 0–4 × 6
-событий) **одиночный greedy-decode** `rl_raw` бьёт `greedy_raw`, парно по событиям:
+On the **25 events of the 0004 harness** (`run_dynamic.iter_events`, `generate_instance` seeds 0–4 × 6
+events) the **single greedy decode** `rl_raw` beats `greedy_raw`, paired over events:
 
-> **median Δ (rl_raw − greedy_raw) < 0 € И wins(rl_raw) > 12/25** (т.е. ≥ 13 из 25).
+> **median Δ (rl_raw − greedy_raw) < 0 € AND wins(rl_raw) > 12/25** (i.e. ≥ 13 of 25).
 
-Считается `python scripts/run_ablation.py --ckpt results/policy_pomo_residual.pt` — чтением
-`analysis.start_rl_vs_greedy`: `median_delta_eur < 0` И `a_wins > 12`. Метрика ДЕТЕРМИНИРОВАНА
-(raw greedy-decode, без wall-clock-конфаунда) → воспроизводимый pass/fail. `run_ablation` НЕ
-меняется — гейт это чтение уже существующей строки.
+It is computed by `python scripts/run_ablation.py --ckpt results/policy_pomo_residual.pt` — by reading
+`analysis.start_rl_vs_greedy`: `median_delta_eur < 0` AND `a_wins > 12`. The metric is DETERMINISTIC
+(a raw greedy decode, without a wall-clock confound) → a reproducible pass/fail. `run_ablation` is NOT
+modified — the gate is a read of an already existing line.
 
-## Правило отбора чекпойнта (pre-registered)
+## The checkpoint selection rule (pre-registered)
 
-Чекпойнт, подаваемый в гейт, = **best-by-val-residual**, где val-residual cost = **одиночный
-greedy-decode** (та же величина, что читает гейт) на ФИКСИРОВАННОМ held-out пуле residual-состояний
-(≥48, сиды дизъюнктны с гейтом). Отбор БЕЗ единой ссылки на сиды 0–4. Anti-forgetting-ось (полная
-congestion-статика) — только МОНИТОРИНГ в логе, НЕ критерий отбора. Warm-start-floor: деплой ≥
-одиночного decode congestion-best на том же пуле (нулевой исход = warm-start).
+The checkpoint submitted to the gate is **best-by-val-residual**, where the val-residual cost = the **single
+greedy decode** (the very quantity the gate reads) on a FIXED held-out pool of residual states
+(≥48, seeds disjoint from the gate). Selection makes NO reference to seeds 0–4. The anti-forgetting axis
+(full congestion statics) is MONITORING in the log only, NOT a selection criterion. A warm-start floor: the
+deployment ≥ the single decode of congestion-best on the same pool (a zero outcome = the warm start).
 
-## Kill-критерии (pre-registered)
+## Kill criteria (pre-registered)
 
-- **patience = 15** эпох без улучшения val-residual → early-stop (best-by-val сохранён).
-- **wall-time ≤ 36 ч** (сервер NJ, по [[train-on-server]], `TRAIN=scripts/train_residual.py`).
-- **ОДИН заход.** Ни второй попытки, ни retune-and-rerun после взгляда на гейт. Провал = валидный
-  исход «Path B не берёт гейт».
+- **patience = 15** epochs without a val-residual improvement → early-stop (best-by-val is kept).
+- **wall time ≤ 36 h** (the NJ server, per [[train-on-server]], `TRAIN=scripts/train_residual.py`).
+- **ONE attempt.** No second try, no retune-and-rerun after looking at the gate. A failure is the valid
+  outcome "Path B does not take the gate".
 
-## Seed-дизъюнкция (валидность гейта — enforced тестом)
+## Seed disjointness (gate validity — enforced by a test)
 
-**Held-out — по СИДУ (реализация спроса/окон), не по node_id.** Все инстансы тянутся из ОДНОГО
-реального пула аптек Аугсбурга (запрет №5 — реальные данные; `generate_instance` по построению
-берёт полный снапшот, node_ids идентичны у всех сидов, разнятся demand/окна). Node_id-дизъюнкция
-поэтому физически невозможна и не является held-out'ом — как и во всём проекте (Шаг1/refit:
-train/val/test = сид-диапазоны, не срезы узлов). Пиновка сид-диапазонов (пересечений НЕТ):
+**Held out BY SEED (the realisation of demand/windows), not by node_id.** All instances come from ONE
+real pool of Augsburg pharmacies (prohibition #5 — real data; `generate_instance` by construction
+takes the full snapshot, node_ids are identical across seeds, demand/windows differ). Node-id disjointness
+is therefore physically impossible and is not a held-out — as everywhere in this project (Step 1/refit:
+train/val/test = seed ranges, not node slices). The seed ranges are pinned (there are NO intersections):
 
-| набор | источник | сиды |
-|-------|----------|------|
-| ГЕЙТ / деплой full-static | `generate_instance` | 0–9 (гейт: 0–4) |
-| full-static val (anti-forget, монитор) | `InstanceSampler` | 1_000_000–1_000_063 |
-| residual-train (база) | `InstanceSampler(62,62)` | ≥ 3_000_000 |
-| residual-val (пул отбора) | `InstanceSampler(62,62)` | 4_000_000–4_000_047 |
+| set | source | seeds |
+|-----|--------|-------|
+| GATE / deployment full-static | `generate_instance` | 0–9 (gate: 0–4) |
+| full-static val (anti-forget, monitor) | `InstanceSampler` | 1_000_000–1_000_063 |
+| residual-train (base) | `InstanceSampler(62,62)` | ≥ 3_000_000 |
+| residual-val (the selection pool) | `InstanceSampler(62,62)` | 4_000_000–4_000_047 |
 
-Residual-база = `InstanceSampler(n_range=(62,62))` (полный набор 62 аптек, held-out по сиду через
-спрос), НЕ `generate_instance` напрямую: последний перезагружает снапшот с диска (~4 с/вызов) →
-непригоден для тысяч residual-построений за прогон. Тот же снапшот, что гейт (кэш загружается 1 раз);
-геометрия/окна общие, разнятся demand-реализации по сиду. Гейт остаётся на `generate_instance(0–4)`.
+The residual base = `InstanceSampler(n_range=(62,62))` (the full set of 62 pharmacies, held out by seed via
+demand), NOT `generate_instance` directly: the latter reloads the snapshot from disk (~4 s per call) →
+unusable for thousands of residual constructions per run. It is the same snapshot as the gate (the cache
+is loaded 1 time); geometry/windows are shared, the demand realisations differ per seed. The gate stays on
+`generate_instance(0–4)`.
 
-Residual-обучение НЕ касается сидов 0–9. Тест `test_residual_seed_disjoint` ассертит: (а) сид-
-диапазоны train/val-residual не пересекают {0–9}; (б) demand-векторы `generate_instance(residual)`
-≠ `generate_instance(гейт)` (реализации held-out, геометрия общая — реальный город).
+Residual training never touches seeds 0–9. The test `test_residual_seed_disjoint` asserts: (a) the
+train/val-residual seed ranges do not intersect {0–9}; (b) the demand vectors of `generate_instance(residual)`
+≠ `generate_instance(gate)` (the realisations are held out, the geometry is shared — a real city).
 
-## Дизайн (раскрытые заранее выборы)
+## Design (choices disclosed in advance)
 
-- **Residual = свежий CVRPTW** (`residual_instance`: депо + необслуженные + срочные, окна сдвинуты).
-  POMO работает БЕЗ изменений — `feasible_starts` на residual-env = «K допустимых СЛЕДУЮЩИХ узлов»;
-  `_decode`/shared-baseline/`train_batch` переиспользуются как есть.
-- **Prefix-rollout = GREEDY** (не политика) — намеренно: `iter_events` берёт served из greedy-
-  исполнения, greedy-префикс совпадает с served-распределением гейта; policy-префикс учил бы на
-  ДРУГОМ распределении и мог провалить гейт «не за то».
-- **Прогресс frac ∈ [0.2, 0.8]** — now_min выбирается так, что ровно round(frac·n_cust) обслужено
-  (по finish-таймам greedy-исполнения). Затем ОДНО событие (traffic/urgent/breakdown) на now_min.
-- **База residual = full-62** (`InstanceSampler(62,62)`, кэш; см. seed-таблицу) — совпадает с
-  размером гейта (нет size-gap).
-- **Микс 50/50**: 50% полных congestion-эпизодов (`InstanceSampler`, распределение congestion-best
-  — anti-catastrophic-forgetting) + 50% residual-эпизодов. Warm-start = `policy_pomo_congestion.pt`;
-  новый файл `results/policy_pomo_residual.pt` (best.pt/congestion/refit НЕ трогаем).
-- Стражи как refit: |g|>0 (freeze-guard), энтропия, no-NaN, mem-gap, freshness-хеш; residual-
-  генератор отбраковывает вырожденные состояния (< 2 допустимых стартов → ресэмпл).
+- **A residual = a fresh CVRPTW** (`residual_instance`: depot + unserved + urgent, windows shifted).
+  POMO works UNCHANGED — `feasible_starts` on a residual env = "K allowed NEXT nodes";
+  `_decode`/shared-baseline/`train_batch` are reused as they are.
+- **The prefix rollout is GREEDY** (not the policy) — deliberately: `iter_events` takes served from the greedy
+  execution, so the greedy prefix matches the gate's served distribution; a policy prefix would train on a
+  DIFFERENT distribution and could fail the gate "for the wrong reason".
+- **Progress frac ∈ [0.2, 0.8]** — now_min is chosen so that exactly round(frac·n_cust) are served
+  (by the finish times of the greedy execution). Then ONE event (traffic/urgent/breakdown) at now_min.
+- **The residual base is full-62** (`InstanceSampler(62,62)`, cached; see the seed table) — it matches the
+  gate's size (no size gap).
+- **A 50/50 mix**: 50% full congestion episodes (`InstanceSampler`, the congestion-best distribution
+  — anti-catastrophic-forgetting) + 50% residual episodes. The warm start = `policy_pomo_congestion.pt`;
+  a new file `results/policy_pomo_residual.pt` (best.pt/congestion/refit are NOT touched).
+- Guards as in the refit: |g|>0 (a freeze guard), entropy, no NaN, the mem gap, a freshness hash; the residual
+  generator rejects degenerate states (< 2 allowed starts → resample).
 
-## Раскрытые gap'ы train↔test (pre-committed, НЕ пост-фактум оправдания)
+## Disclosed train↔test gaps (pre-committed, NOT post-hoc excuses)
 
-1. Train-residual = **одно** событие в случайной точке прогресса; гейт (0004) включает
-   **накопленные многособытийные** состояния (поток из 6). Distribution shift известен заранее.
-2. `frac ∈ [0.2, 0.8]` — предполагаемый диапазон обслуженной доли; гейт не привязан к frac.
+1. Train-residual = **one** event at a random point of progress; the gate (0004) includes
+   **accumulated multi-event** states (a stream of 6). The distribution shift is known in advance.
+2. `frac ∈ [0.2, 0.8]` is the assumed range of the served share; the gate is not tied to frac.
 
-## Диспозиция
+## Disposition
 
-- **Pass** (гейт взят) → decision 0012: промоут `policy_pomo_residual.pt`, перегон ablation
-  (0010-харнесс) с новым чекпойнтом (вторично: сдвинулась ли tight-budget-картина).
-- **Fail** → decision 0012: «Path B не берёт гейт» — честное закрытие тезиса «RL по качеству».
-  Без ретрая. В обоих исходах перегоняем ablation для полной картины.
+- **Pass** (the gate is taken) → decision 0012: promote `policy_pomo_residual.pt`, re-run the ablation
+  (the 0010 harness) with the new checkpoint (secondary: did the tight-budget picture move).
+- **Fail** → decision 0012: "Path B does not take the gate" — an honest closure of the "RL on quality" thesis.
+  No retry. In either outcome we re-run the ablation for the full picture.
 
-## Тесты (enforce предрегистрацию)
+## Tests (enforcing the pre-registration)
 
-seed-дизъюнкция (train/val-residual ∩ {0–9} = ∅); residual feasible + непустой пул pending +
-≥2 стартов; POMO-multistart работает на residual; val-residual = single-decode (== метрика гейта);
-микс ~50/50 (seeded); обе оси в логе (residual + full); smoke: residual-cost↓ и full НЕ деградирует.
-Связи: [[0010-phase6b-ablation-latency-niche]] · [[0007-phase6b-congestion-training]] · [[0006-pomo-static]].
+seed disjointness (train/val-residual ∩ {0–9} = ∅); the residual is feasible + a non-empty pending pool +
+≥2 starts; POMO multistart works on a residual; val-residual = a single decode (== the gate metric);
+the ~50/50 mix (seeded); both axes in the log (residual + full); smoke: residual cost↓ and full does NOT degrade.
+Links: [[0010-phase6b-ablation-latency-niche]] · [[0007-phase6b-congestion-training]] · [[0006-pomo-static]].

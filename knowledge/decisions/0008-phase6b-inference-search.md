@@ -6,81 +6,84 @@ status: accepted
 tags: [decision, inference, search, pomo, portfolio, dynamic, cvrptw, phase6b]
 ---
 
-# 0008 — Инференс-поиск (Phase 6b · Шаг 3)
+# 0008 — Inference search (Phase 6b · Step 3)
 
-**Контекст:** [[0007-phase6b-congestion-training]] закрыл обучение под congestion, но с честным
-потолком — **RL под динамикой НЕ обгоняет greedy** (0004-re-plan: RL +1.6% ХУЖЕ greedy,
-event-dependent), а статический выигрыш слабо переносится на residual. Шаг 3: **БЕЗ обучения,
-только decode** — инференс-поиск на congestion-best чекпойнте (sha `24c8cfb0607235f8`, тот же, что
-0007). Цель: срезать static gap и **закрыть динамический пол** (сделать RL ≥ greedy).
+**Context:** [[0007-phase6b-congestion-training]] closed training under congestion, but with an honest
+ceiling — **under dynamics RL does NOT overtake greedy** (0004 re-plan: RL +1.6% WORSE than greedy,
+event-dependent), and the static win transfers weakly to a residual. Step 3: **NO training,
+decode only** — inference search on the congestion-best checkpoint (sha `24c8cfb0607235f8`, the same as in
+0007). The goal: cut the static gap and **close the dynamic floor** (make RL ≥ greedy).
 
-## Что построено
+## What was built
 
-1. **Батчевый decode** (`decoder.logits_batch`, `policy.sample_k`): `sample_k(K, temperature)` —
-   K стохастических роллаутов, **один encode + батчевый декод по K** (нейронка векторно, один
-   forward на шаг). Свой `torch.Generator` → детерминизм по seed (глобальный RNG не трогаем);
-   `temperature>0`. Форс-старты НЕ навязываем (POMO multistart-greedy = отдельный кандидат).
-2. **`take_best`** — лучший кандидат ЕДИНЫМ `evaluate_solution` (под тем же travel).
-3. **`PortfolioPlanner`** (`replan/portfolio.py`): кандидаты = { sample-K ∪ RL-multistart-greedy ∪
-   greedy-эвристика } → best + латентность end-to-end. **Гарантия ПО ПОСТРОЕНИЮ: результат ≤
-   greedy** — greedy-кандидат байт-идентичен методу `greedy` в таблице (тот же
-   instance+travel+fleet+scorer → `min(...) ≤ greedy` тождественно).
-4. **Проброс в харнесс 0004** (`compare_replan(rl_planner=)`, `run_dynamic.run`) + `run_search.py`
-   (3 замера + provenance → `results/search_summary.json`).
+1. **A batched decode** (`decoder.logits_batch`, `policy.sample_k`): `sample_k(K, temperature)` —
+   K stochastic rollouts, **one encode + a batched decode over K** (the network runs vectorised, one
+   forward per step). Its own `torch.Generator` → determinism per seed (the global RNG is untouched);
+   `temperature>0`. Forced starts are NOT imposed (POMO multistart-greedy is a separate candidate).
+2. **`take_best`** — the best candidate by the SINGLE `evaluate_solution` (under the same travel).
+3. **`PortfolioPlanner`** (`replan/portfolio.py`): candidates = { sample-K ∪ RL-multistart-greedy ∪
+   the greedy heuristic } → the best + end-to-end latency. **Guarantee BY CONSTRUCTION: the result ≤
+   greedy** — the greedy candidate is byte-identical to the `greedy` method in the table (the same
+   instance+travel+fleet+scorer → `min(...) ≤ greedy` identically).
+4. **Wiring into the 0004 harness** (`compare_replan(rl_planner=)`, `run_dynamic.run`) + `run_search.py`
+   (3 measurements + provenance → `results/search_summary.json`).
 
-## Ключевой дизайн
+## The key design
 
-- **Латентность инференс-поиска env-bound, НЕ neural-bound**: батч-декод держит нейронку ~плоской
-  по K, растёт только K× `env.step`/шаг → латентность ~линейна по K (K=256 пробивает 1с). Отсюда
-  динамика на **K≤32**, статика (офлайн, без гейта) на K=128.
-- **Гарантия держится на байт-идентичности greedy-кандидата** — не на «RL умный».
-- **sample_k — чистый temperature-сэмплинг** (multistart-greedy — pre-existing, отдельный кандидат).
+- **The latency of inference search is env-bound, NOT neural-bound**: the batched decode keeps the network
+  ~flat in K, only K× `env.step` per step grows → latency is ~linear in K (K=256 breaks 1s). Hence
+  dynamics run at **K≤32** and statics (offline, no gate) at K=128.
+- **The guarantee rests on the byte-identity of the greedy candidate** — not on "RL being smart".
+- **sample_k is pure temperature sampling** (multistart-greedy is pre-existing, a separate candidate).
 
-## Результат (congestion-best, free-flow static + congestion dynamic)
+## Result (congestion-best, free-flow static + congestion dynamic)
 
-**K-таблица** (sample-K take-best, full-62 free-flow, **3 сида** — латентно-качественная развёртка):
+**The K table** (sample-K take-best, full-62 free-flow, **3 seeds** — a latency/quality sweep):
 
-| K | best,€ | vs greedy | лат,мс |
+| K | best,€ | vs greedy | lat,ms |
 |---|--------|-----------|--------|
 | 16 | 830.0 | −0.1% | 114 |
 | 128 | 783.4 | −5.7% | 811 |
 | 256 | 782.3 | −5.8% | 1588 |
 
-**Static** (full-62, seeds 0–9, free-flow, K=128; congestion-фичи нейтральны — mult≡1, node_cong=0):
+**Static** (full-62, seeds 0–9, free-flow, K=128; the congestion features are neutral — mult≡1, node_cong=0):
 
-| метод | € | vs greedy | vs OR 611 |
-|-------|---|-----------|-----------|
+| method | € | vs greedy | vs OR 611 |
+|--------|---|-----------|-----------|
 | greedy | 825.4 | — | +35.1% |
 | RL multistart-only (pre-existing) | 785.3 | −4.9% | +28.5% |
-| sample-K take-best (новый, standalone) | 789.8 | −4.3% | +29.2% |
+| sample-K take-best (new, standalone) | 789.8 | −4.3% | +29.2% |
 | **PortfolioPlanner** | **766.1** | **−7.2%** | **+25.4%** |
 
-**Dynamic** (0004 harness, 5×6, K=32): RL-portfolio **843.9€ vs greedy 851.5 = −0.9%** (в 0007 было
-**+1.6% ХУЖЕ**); **гарантия 0/25 нарушений, худшая Δ +0.00€**; латентность **430мс <1с** (OR-Tools
-2001мс, ×5). unserved rl 2.0 = greedy 2.0 (OR 2.48).
+**Dynamic** (the 0004 harness, 5×6, K=32): RL portfolio **843.9€ vs greedy 851.5 = −0.9%** (in 0007 it was
+**+1.6% WORSE**); **the guarantee holds 0/25 violations, the worst Δ +0.00€**; latency **430ms <1s** (OR-Tools
+2001ms, ×5). unserved rl 2.0 = greedy 2.0 (OR 2.48).
 
-## Вывод — честно (асимметрия)
+## Conclusion — honestly (an asymmetry)
 
-- **Динамический пол ЗАКРЫТ (реально, ново — главный выигрыш Шага 3):** портфель ≥ greedy на КАЖДОМ
-  из 25 событий по построению; было +1.6% хуже → стало −0.9% (берёт RL, где выигрывает, greedy —
-  иначе). Латентность цела (430мс <1с). Это прямой лом под 0004-гэп «RL хуже greedy на residual».
-- **Статика — скромно, тянет pre-existing multistart:** дискриминатор (multistart-only 785.3 vs
-  portfolio 766.1) показывает, что **новый рычаг sample-K добавил −2.45% сверх multistart** (не ноль —
-  гипотеза «бесполезен» опровергнута), и портфель обходит прежний деплой best.pt (770.4). Но тяжёлую
-  работу делает **pre-existing** multistart-greedy, не инференс-поиск. Это маргинальный плюс, не прорыв.
-- **OR-Tools по cost ниже RL только из-за 2с дедлайна** (душит OR: unserved 2.48 vs 2.0) — хедлайн
-  держим на **гарантии + латентности**, не на «RL бьёт OR».
+- **The dynamic floor is CLOSED (real and new — the main win of Step 3):** the portfolio is ≥ greedy at EVERY
+  one of the 25 events by construction; it was +1.6% worse → it is now −0.9% (it takes RL where RL wins and
+  greedy otherwise). Latency is intact (430ms <1s). This is the direct lever against the 0004 gap "RL worse
+  than greedy on a residual".
+- **Statics — modest, carried by the pre-existing multistart:** the discriminator (multistart-only 785.3 vs
+  portfolio 766.1) shows that **the new lever, sample-K, added −2.45% on top of multistart** (not zero — the
+  "useless" hypothesis is refuted) and that the portfolio beats the previous deployment best.pt (770.4). But
+  the heavy lifting is done by the **pre-existing** multistart-greedy, not by inference search. A marginal
+  plus, not a breakthrough.
+- **OR-Tools is below RL on cost only because of the 2s deadline** (which chokes OR: unserved 2.48 vs 2.0) —
+  the headline stays on **the guarantee + latency**, not on "RL beats OR".
 
-## Дальше
+## Next
 
-Динамический пол закрыт → RL-развёртка (портфель) безопасна к greedy. Если нужна победа RL над
-greedy ПО КАЧЕСТВУ (не только ≥) на больших residual — Path B (residual-дообучение, [[0007-phase6b-congestion-training]]).
-Иначе Phase 6b закрыта: congestion-обучение (модест) + инференс-поиск (пол закрыт, static срезан скромно).
+The dynamic floor is closed → an RL rollout (the portfolio) is safe with respect to greedy. If an RL win over
+greedy ON QUALITY (not merely ≥) on large residuals is required — Path B (residual fine-tuning,
+[[0007-phase6b-congestion-training]]).
+Otherwise Phase 6b closes: congestion training (modest) + inference search (the floor closed, statics cut modestly).
 
-## Тесты
+## Tests
 
-parity батч-vs-одиночный decode, детерминизм sample_k по seed, `temperature>0`, гарантия
-portfolio ≤ greedy на каждом инстансе, take_best пропускает None-кандидатов, латентность логируется,
-планер не мутирует вход-инстанс. pytest **77 passed**. Provenance/sha — `results/search_summary.json`
-(вне git, запрет №1; платформа локальная — качество RL/greedy детерминировано seed+config+весами).
-Связи: [[0004-dynamics]] · [[0006-pomo-static]] · [[0007-phase6b-congestion-training]].
+parity of the batched vs single decode, determinism of sample_k per seed, `temperature>0`, the
+portfolio ≤ greedy guarantee on every instance, take_best skipping None candidates, latency logged,
+the planner not mutating the input instance. pytest **77 passed**. Provenance/sha — `results/search_summary.json`
+(outside git, prohibition #1; the platform is local — RL/greedy quality is deterministic from seed+config+weights).
+Links: [[0004-dynamics]] · [[0006-pomo-static]] · [[0007-phase6b-congestion-training]].

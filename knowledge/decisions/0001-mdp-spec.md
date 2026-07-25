@@ -6,77 +6,77 @@ status: accepted
 tags: [decision, mdp, cvrptw, spec]
 ---
 
-# 0001 — Динамический CVRPTW: доставка по аптекам Аугсбурга
+# 0001 — Dynamic CVRPTW: delivery to the pharmacies of Augsburg
 
-## 1. Problem statement + миссия
-GNN+RL-агент динамической маршрутизации доставки медикаментов по всем аптекам
-Аугсбурга на реальной OSM-сети, с онлайн-перестроением при пробках/поломках/
-срочных заказах. Цель — воспроизводимый кейс со снижением времени и пробега
-против OR-Tools.
+## 1. Problem statement + mission
+A GNN+RL agent for dynamic routing of medicine delivery to every pharmacy in
+Augsburg on the real OSM network, with online re-planning on jams/breakdowns/
+urgent orders. The goal is a reproducible case with reduced time and distance
+against OR-Tools.
 
-## 2. Вход инстанса
-- Дорожный граф [REAL]: OSM Augsburg drive; free-flow из maxspeed + немецкий
-  фолбэк (primary/secondary 50, residential/Tempo-30 → 30, living_street 7).
-- Депо [REAL]: PHOENIX VZ, Benzstraße 10, 86391 Stadtbergen → geocode → snap
-  к ближайшему OSM-узлу. Одно депо. Окно диспетчеризации.
-- Клиенты [REAL locations]: аптеки amenity=pharmacy в границах Аугсбурга.
-  - demand d_i [ASSUMED]: 3–12 боксов, из распределения.
-  - service s_i [ASSUMED]: ~4 мин/стоп.
-  - окно [e_i,l_i]: из opening_hours [REAL where present], иначе синтетика [ASSUMED, tagged].
-- Флот [ASSUMED, в config]: гомогенные фургоны; K=6; Q=60 боксов;
-  v_eff(e)=лимит дороги; T_max тура=4ч; стоимость c_f (за машину) + c_d (€/км)
-  + c_t (€/ч); старт/финиш — депо.
-- Часы [REAL clock]: стартовый datetime эпизода → (день_недели, час).
+## 2. Instance input
+- Road graph [REAL]: OSM Augsburg drive; free-flow from maxspeed + the German
+  fallback (primary/secondary 50, residential/Tempo-30 → 30, living_street 7).
+- Depot [REAL]: PHOENIX VZ, Benzstraße 10, 86391 Stadtbergen → geocode → snap
+  to the nearest OSM node. One depot. A dispatch window.
+- Customers [REAL locations]: pharmacies amenity=pharmacy within the Augsburg boundary.
+  - demand d_i [ASSUMED]: 3–12 boxes, from a distribution.
+  - service s_i [ASSUMED]: ~4 min/stop.
+  - window [e_i,l_i]: from opening_hours [REAL where present], else synthetic [ASSUMED, tagged].
+- Fleet [ASSUMED, in config]: homogeneous vans; K=6; Q=60 boxes;
+  v_eff(e)=the road limit; tour T_max=4h; cost c_f (per vehicle) + c_d (€/km)
+  + c_t (€/h); start/finish at the depot.
+- Clock [REAL clock]: the episode's start datetime → (weekday, hour).
 
 ## 3. MDP
-- State: статика (признаки узлов, депо) + динамика (позиция машины, остаток
-  вместимости, текущее время, множества visited/unvisited/feasible, частичные
-  маршруты, активные события) → эмбеддинг GNN по текущему графу.
-- Action: выбрать следующий feasible-узел (masking) или вернуться в депо;
-  автогрегрессивно; маршруты машин строим последовательно.
-- Reward: −(c_f·задействованных_машин + c_d·пробег + c_t·время
-  + штраф_опоздание + штраф_необслуженные); разрежённый (конец эпизода).
-- Transition: сдвиг машины; время += travel_time(e,τ)·congestion; обслуживание
-  (вместимость↓, ожидание если приехал раньше e_i); пометка visited;
-  стохастические события могут сработать.
-- Constraints: hard через masking — вместимость, окна, возврат в депо;
-  soft через штраф — опоздание, переработка (T_max).
-- Objective: минимизация ожидаемой стоимости на распределении инстансов
-  (реальный Аугсбург + возмущения).
+- State: statics (node features, depot) + dynamics (vehicle position, remaining
+  capacity, current time, the visited/unvisited/feasible sets, partial
+  routes, active events) → a GNN embedding over the current graph.
+- Action: pick the next feasible node (masking) or return to the depot;
+  autoregressively; vehicle routes are built sequentially.
+- Reward: −(c_f·vehicles_used + c_d·distance + c_t·time
+  + lateness_penalty + unserved_penalty); sparse (end of episode).
+- Transition: move the vehicle; time += travel_time(e,τ)·congestion; service
+  (capacity↓, waiting when arriving before e_i); mark visited;
+  stochastic events may fire.
+- Constraints: hard via masking — capacity, windows, return to the depot;
+  soft via penalties — lateness, overtime (T_max).
+- Objective: minimise the expected cost over a distribution of instances
+  (the real Augsburg + perturbations).
 
 ## 4. Congestion & speed model
-- t0(e) = length(e)/v(e); v из OSM maxspeed + фолбэк (OSMnx add_edge_speeds
-  + немецкий override → add_edge_travel_times).
+- t0(e) = length(e)/v(e); v from OSM maxspeed + the fallback (OSMnx add_edge_speeds
+  + a German override → add_edge_travel_times).
 - t(e,τ) = t0(e)·c(class(e),dow(τ),h(τ))·(1 + Σ_k I_k(e,τ)).
-- c(class,dow,h) [ASSUMED, calibrated]: детерминированный недельно-часовой
-  профиль по классу дороги; калибровка по кривой TomTom Augsburg. Тег simulated-on-real.
-- I_k [ASSUMED]: стохастические инциденты; ставка спавна ~ Пуассон, зависит
-  от (dow,h); магнитуда δ_k (∞=закрытие→удаление ребра); длительность/затухание.
-  Инцидент = ТРИГГЕР re-plan.
-- Реализация: edge-level; кэш free-flow матрицы τ0 и путей P_ij; при событии
-  пересчитывать ТОЛЬКО OD-пары, чей путь задет.
+- c(class,dow,h) [ASSUMED, calibrated]: a deterministic weekly-hourly
+  profile per road class; calibrated against the TomTom Augsburg curve. Tagged simulated-on-real.
+- I_k [ASSUMED]: stochastic incidents; the spawn rate is ~Poisson and depends
+  on (dow,h); magnitude δ_k (∞=closure→the edge is removed); duration/decay.
+  An incident is a re-plan TRIGGER.
+- Implementation: edge-level; cache the free-flow matrix τ0 and the paths P_ij; on an event
+  recompute ONLY the OD pairs whose path is affected.
 
-## 5. Eval-план
-- Метрики: суммарное время, пробег (топливный прокси), % on-time, число машин,
-  необслуженные.
-- Бейзлайны: OR-Tools + greedy nearest-feasible на идентичных инстансах/seed.
-- Критерии: (static) RL в пределах целевого gap к OR-Tools [X% — калибруется
-  в Phase 4]; (dynamic) латентность re-plan ≪ re-solve OR-Tools при сравнимой
-  стоимости. Всё воспроизводимо: seed + config + data-snapshot.
-- Слайсы тестов: tiny с известным оптимумом → малый синтетический → полный Аугсбург.
+## 5. Eval plan
+- Metrics: total time, distance (a fuel proxy), % on-time, number of vehicles,
+  unserved customers.
+- Baselines: OR-Tools + greedy nearest-feasible on identical instances/seed.
+- Criteria: (static) RL within the target gap to OR-Tools [X% — calibrated
+  in Phase 4]; (dynamic) re-plan latency ≪ an OR-Tools re-solve at comparable
+  cost. Everything reproducible: seed + config + data snapshot.
+- Test slices: tiny with a known optimum → a small synthetic one → the full Augsburg.
 
-## 6. Допущения и failure modes
-- FIFO-упрощение: множитель берём по времени отправления пошагово, строгий FIFO
-  не гарантируем (явное допущение TDVRP).
-- Покрытие maxspeed в OSM < 100% → фолбэк; на сборе данных логировать % покрытия,
-  порог = verify-гейт Phase 2.
-- demand/fleet/service параметризованы [ASSUMED], лежат в config.
-- T_max=4ч = кэп одного тура. Обоснование: (а) мульти-турные операции фармдистрибуции
-  в окне 08–18 (2–4 тура/день ≈ 3–4ч); (б) внутри EU 561/2006 (≤4.5ч непрерывного
-  вождения). Кэпит ПОЛНОЕ время маршрута (езда+ожидание+сервис) — упрощение против
-  чистого driving-time EU. Сейчас слабо-биндящее (туры ~2ч при K=8), станет активным
-  под congestion (Phase 7).
+## 6. Assumptions and failure modes
+- FIFO simplification: the multiplier is taken per step by departure time, strict FIFO
+  is not guaranteed (an explicit TDVRP assumption).
+- maxspeed coverage in OSM < 100% → a fallback; log the coverage % during data collection,
+  the threshold is a Phase 2 verify gate.
+- demand/fleet/service are parameterised [ASSUMED] and live in the config.
+- T_max=4h = the cap on one tour. Rationale: (a) multi-tour pharma distribution operations
+  in the 08–18 window (2–4 tours/day ≈ 3–4h); (b) inside EU 561/2006 (≤4.5h of continuous
+  driving). It caps the FULL route time (driving+waiting+service) — a simplification against
+  the pure EU driving time. Currently weakly binding (tours ~2h at K=8), it becomes active
+  under congestion (Phase 7).
 
-## 7. Backlog (не в v1)
-Cold chain (2–8°C, подпарк/ограничение); мульти-депо; разнотипный флот;
-Time Series форкаст c(·); unsupervised-сегментация.
+## 7. Backlog (not in v1)
+Cold chain (2–8°C, a sub-fleet/constraint); multi-depot; a heterogeneous fleet;
+a time-series forecast of c(·); unsupervised segmentation.

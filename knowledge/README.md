@@ -1,18 +1,18 @@
-# knowledge/ — vault проекта logistics-rl-gnn
+# knowledge/ — vault of the logistics-rl-gnn project
 
-Второй мозг проекта: Obsidian-vault + источник Tier-2 чтений для Claude Code.
+The project's second brain: an Obsidian vault plus the source of Tier-2 reads for Claude Code.
 
-## Конституция
-1. Файлы создаются только по запросу; папки не реструктурируются без запроса.
-2. Один дом на факт: volatile-state → `hot.md` (curated-блок) · durable-уроки → native-память Claude ·
-   решения → `decisions/dec-*.md` · процедуры → `runbooks/`.
-3. `[[wikilinks]]` связывают ноты; валидатор — `scripts/check-wikilinks.py` (если установлен M4).
-4. Frontmatter на нотах единообразный (`type` / `date` / `tags`) — vault остаётся queryable.
+## Constitution
+1. Files are created only on request; folders are not restructured without a request.
+2. One home per fact: volatile state → `hot.md` (the curated block) · durable lessons → Claude's
+   native memory · decisions → `decisions/dec-*.md` · procedures → `runbooks/`.
+3. `[[wikilinks]]` connect the notes; the validator is `scripts/check-wikilinks.py` (if M4 is installed).
+4. Note frontmatter is uniform (`type` / `date` / `tags`) — the vault stays queryable.
 
 ## Obsidian
-Открывать как vault ПАПКУ `knowledge/` (не корень проекта — скан большого репозитория вешает
-Electron). `.obsidian/` — в `.gitignore`.
+Open the FOLDER `knowledge/` as the vault (not the project root — scanning a large repository hangs
+Electron). `.obsidian/` belongs in `.gitignore`.
 
-## Структура
-`hot.md` live-state (AUTO+CURATED) · `index.md` авто-индекс (Stop-hook) · `daily_logs/` ·
+## Structure
+`hot.md` live state (AUTO+CURATED) · `index.md` the auto-index (Stop hook) · `daily_logs/` ·
 `decisions/` · `architecture/` · `runbooks/` · `templates/`.

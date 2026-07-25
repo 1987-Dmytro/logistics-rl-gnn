@@ -6,77 +6,77 @@ status: accepted
 tags: [decision, congestion, training, pomo, dynamic, cvrptw, phase6b]
 ---
 
-# 0007 — Обучение под congestion (Phase 6b · Шаг 2)
+# 0007 — Training under congestion (Phase 6b · Step 2)
 
-**Контекст:** [[0004-dynamics]] вскрыл корень — RL реагирует на события ЧЕРЕЗ feasibility-маску,
-а не через congestion-фичи (обучен free-flow → под congestion OOD, хуже на больших residual).
-[[0005-phase6b-congestion-obs]] дал наблюдаемость (Шаг 0), [[0006-pomo-static]] — POMO на статике
-(Шаг 1, free-flow). Шаг 2: **обучить POMO под активной congestion**, чтобы политика ИСПОЛЬЗОВАЛА
-сигнал. Выбор оператора: **Path A (congestion-static) + warm-start от 770.4€** (residual-обучение
-Path B — в резерве, если A не закроет dynamic-гэп).
+**Context:** [[0004-dynamics]] exposed the root cause — RL reacts to events THROUGH the feasibility mask
+rather than through congestion features (trained free-flow → OOD under congestion, worse on large residuals).
+[[0005-phase6b-congestion-obs]] gave observability (Step 0), [[0006-pomo-static]] gave POMO on statics
+(Step 1, free-flow). Step 2: **train POMO under active congestion** so the policy USES the
+signal. The operator's choice: **Path A (congestion-static) + a warm start from 770.4€** (residual training,
+Path B, is held in reserve should A fail to close the dynamic gap).
 
-## Что построено
+## What was built
 
-1. **Векторизация `build_graph`** (`TravelModel.matrix()`): k² Python-вызовов `travel.time()` душили
-   ретрейн при k=62 → один шот (FreeFlow→t0; Congestion→`t0·c·(1+Σинц)`, зоны outer-OR, closure union).
-   Free-flow **бит-в-бит** (регрессия-safe, parity-тест vs поэлементный `time()`).
-2. **Congestion-обучение** (`POMOConfig.for_congestion` + `POMOTrainer`): warm-start 770.4€, lr=3e-4,
-   β=0.03; congestion-env фабрика (dow=delivery, offset+инциденты на **t0**, `t_start=offset` →
-   активны с диспетчеризации, **coverage 100%** узлов); reward И greedy congestion-aware
-   (`travel=env.travel`; free-flow → паритет). Веса → `policy_pomo_congestion.pt` (best.pt/refit целы).
-3. **Warm-start floor**: стартовый val = планка, warm-start сохранён как ckpt → **деплой НЕ хуже
-   warm-start** (нулевой исход = чистая находка, не тихая регрессия).
-4. **Было/Стало под congestion** (`eval_congestion`) + **переоценка таблицы 0004** (`run_dynamic --ckpt`).
+1. **Vectorising `build_graph`** (`TravelModel.matrix()`): k² Python calls to `travel.time()` choked the
+   retrain at k=62 → one shot (FreeFlow→t0; Congestion→`t0·c·(1+Σinc)`, zones by outer-OR, closure union).
+   Free-flow is **bit for bit** (regression-safe, a parity test vs element-wise `time()`).
+2. **Congestion training** (`POMOConfig.for_congestion` + `POMOTrainer`): warm start 770.4€, lr=3e-4,
+   β=0.03; a congestion env factory (dow=delivery, offset+incidents on **t0**, `t_start=offset` →
+   active from dispatch, **coverage 100%** of nodes); both reward AND greedy are congestion-aware
+   (`travel=env.travel`; free-flow → parity). Weights → `policy_pomo_congestion.pt` (best.pt/refit intact).
+3. **A warm-start floor**: the starting val is the bar and the warm start is kept as the ckpt → **the
+   deployment is NEVER worse than the warm start** (a zero outcome is a clean finding, not a silent regression).
+4. **Before/after under congestion** (`eval_congestion`) + **re-evaluating the 0004 table** (`run_dynamic --ckpt`).
 
-## Ключевой дизайн (осознанные упрощения)
+## The key design (deliberate simplifications)
 
-- **encode ОДИН раз в t0** (congestion-снимок на диспетчеризации) + decoder `time_context` бежит по
-  шагам; reward через `evaluate_solution(travel=)` — полное time-dependent время (корректно). НЕ
-  per-step re-encode (как snapshot в 0004).
-- **Диурнал почти невидим энкодеру** (математика): канал 0 max-норма сокращает равномерный `c`
-  (`t0·c/max = t0/max`), канал 1 = `c` — константа, дублирует `time_context`. Значит **инциденты
-  на t0 — весь сигнал** (локальны, переживают max-норму). Отсюда richness инцидентов критична
-  (advisor); `≥1` инцидент в узле + долгоживущий → coverage 100%.
+- **encode ONCE at t0** (a congestion snapshot at dispatch) + the decoder's `time_context` runs over the
+  steps; reward through `evaluate_solution(travel=)` — full time-dependent time (correct). NOT a
+  per-step re-encode (like the snapshot in 0004).
+- **The diurnal is nearly invisible to the encoder** (the maths): channel 0's max normalisation cancels a
+  uniform `c` (`t0·c/max = t0/max`), channel 1 = `c` is a constant that duplicates `time_context`. So
+  **the incidents on t0 are the whole signal** (local, they survive the max norm). Hence the richness of
+  incidents is critical (advisor); `≥1` incident on a node + long-lived → coverage 100%.
 
-## Результат (early-stop ep30, best-by-val ep15, TRAIN_DONE=0)
+## Result (early-stop ep30, best-by-val ep15, TRAIN_DONE=0)
 
-**Планка** (free-flow-best под congestion): val 721.1, gap_greedy **+0.8%** — OOD съел выигрыш
-(было −6.7% под free-flow → чуть ХУЖЕ greedy под congestion).
+**The bar** (free-flow-best under congestion): val 721.1, gap_greedy **+0.8%** — OOD ate the win
+(it was −6.7% under free-flow → slightly WORSE than greedy under congestion).
 
-| Ось | Стало (RL-cong) | RL-cong vs RL-ff | vs greedy | vs OR |
-|-----|-----------------|------------------|-----------|-------|
-| **Статика** (Было/Стало, 32 held-out) | 712.2€ | **−1.7%** | −0.3% | +16.4% (snap-пессимизм) |
-| **Динамика** (0004 re-plan, 5×6) | 865.5€ | **−0.4%** | +1.6% | ≈паритет |
+| Axis | After (RL-cong) | RL-cong vs RL-ff | vs greedy | vs OR |
+|------|-----------------|------------------|-----------|-------|
+| **Statics** (before/after, 32 held-out) | 712.2€ | **−1.7%** | −0.3% | +16.4% (snapshot pessimism) |
+| **Dynamics** (0004 re-plan, 5×6) | 865.5€ | **−0.4%** | +1.6% | ≈parity |
 
-- **Обобщение** (gap-to-greedy): train −0.2% · val −0.5% · TEST −0.9% — согласованы (train≈val≈test)
-  → **memorization нет**; выигрыш переносится на held-out.
-- **Латентность ×134 цела** (RL 15мс vs OR 2001мс — тот же forward-pass).
-- Динамика −0.4% — **слабый, но консистентный сигнал, НЕ выброс** (парно 25 событий: median −4.84€,
-  16/23 разошедшихся маршрутов за congestion vs 7 против; крупнейший |d|=+33€ — ПРОТИВ cong, т.е.
-  итог не одним outlier'ом). congestion реально сместил поведение (23/25 маршрутов иные).
-- Динамика: 5 сидов (0–4) vs 0004's 2 → **абс.числа иные** (сиды 2–4 тяжелее, unserved 2.0);
-  сравнение RL-vs-RL/greedy — на ТЕХ ЖЕ сидах. Provenance/sha — `results/pomo_congestion_summary.json`.
+- **Generalisation** (gap-to-greedy): train −0.2% · val −0.5% · TEST −0.9% — consistent (train≈val≈test)
+  → **no memorisation**; the win transfers to held-out.
+- **The ×134 latency is intact** (RL 15ms vs OR 2001ms — the same forward pass).
+- Dynamics −0.4% is a **weak but consistent signal, NOT an outlier** (paired over 25 events: median −4.84€,
+  16/23 diverging routes in favour of congestion vs 7 against; the largest |d|=+33€ is AGAINST cong, i.e.
+  the result is not driven by one outlier). Congestion genuinely shifted behaviour (23/25 routes differ).
+- Dynamics: 5 seeds (0–4) vs 0004's 2 → **the absolute numbers differ** (seeds 2–4 are heavier, unserved 2.0);
+  the RL-vs-RL/greedy comparison is on THE SAME seeds. Provenance/sha — `results/pomo_congestion_summary.json`.
 
-## Вывод — честно
+## Conclusion — honestly
 
-- **Congestion-обучение помогло, но СКРОМНО, и статика > динамика.** Статический выигрыш −1.7%
-  (RL вернул greedy-паритет+ под congestion) **слабо переносится** на residual re-plan (−0.4%).
-- **0004-гэп «RL хуже greedy на больших residual» почти не сдвинут** (+2.1%→+1.6%): residual
-  (депо+необслуженные+срочные, окна сдвинуты, congestion в момент события) отличается от
-  static-congestion достаточно, что полный перенос требует **Path B (обучение на residual)**.
-  Линковка advisor «Path A → 0004» держится лишь направленно.
-- **RL под динамикой НЕ обгоняет greedy** (event-dependent, как в 0004) — заявлять победу RL по
-  качеству нельзя. Хедлайн остаётся латентность (×134); congestion-обучение — маргинальный плюс.
-- **floor гарантировал отсутствие регрессии**; `policy_pomo_best.pt` (770.4€ static) не тронут.
+- **Congestion training helped, but MODESTLY, and statics > dynamics.** The static win of −1.7%
+  (RL restored greedy parity+ under congestion) **transfers weakly** to a residual re-plan (−0.4%).
+- **The 0004 gap "RL worse than greedy on large residuals" barely moved** (+2.1%→+1.6%): a residual
+  (depot+unserved+urgent, windows shifted, congestion at the moment of the event) differs from
+  static congestion enough that a full transfer requires **Path B (training on residuals)**.
+  The advisor's link "Path A → 0004" only holds directionally.
+- **Under dynamics RL does NOT overtake greedy** (event-dependent, as in 0004) — no RL win on quality
+  may be claimed. The headline stays latency (×134); congestion training is a marginal plus.
+- **The floor guaranteed no regression**; `policy_pomo_best.pt` (770.4€ static) is untouched.
 
-## Дальше
+## Next
 
-Path B (residual-дообучение на распределении re-plan) — прямой лом под dynamic-гэп; либо per-step
-re-encode (дороже) — если нужна победа RL над greedy на больших residual. Иначе Шаг 2 закрыт как
-«congestion-обучение даёт модест-плюс, dynamic-качество остаётся ≈greedy».
+Path B (residual fine-tuning on the re-plan distribution) is the direct lever against the dynamic gap; or a
+per-step re-encode (more expensive) — if an RL win over greedy on large residuals is required. Otherwise
+Step 2 closes as "congestion training gives a modest plus, dynamic quality stays ≈greedy".
 
-## Тесты
+## Tests
 
-matrix-parity (vs поэлементный `time()`, вкл. closure+граница зоны), congestion-train+coverage,
-sampler-детерминизм, **warm-start floor не перезаписан худшей эпохой**. Все зелёные (pytest 70).
-Связи: [[0004-dynamics]] · [[0005-phase6b-congestion-obs]] · [[0006-pomo-static]].
+matrix parity (vs element-wise `time()`, including closure+the zone boundary), congestion train+coverage,
+sampler determinism, **the warm-start floor is not overwritten by a worse epoch**. All green (pytest 70).
+Links: [[0004-dynamics]] · [[0005-phase6b-congestion-obs]] · [[0006-pomo-static]].

@@ -6,67 +6,67 @@ status: accepted
 tags: [decision, ablation, latency, polish, rl, cvrptw, phase6b]
 ---
 
-# 0010 — Ablation: латентная ниша RL (Phase 6b)
+# 0010 — Ablation: the latency niche of RL (Phase 6b)
 
-**Контекст:** [[0009-phase6b-local-search-polish]] закрылся открытым вопросом тезиса: polish
-выровнял старты лишь **у сходимости** (~16с на n=62). Есть ли режим, где СТАРТ RL решает — где
-polish НЕ успевает выровнять под жёстким realtime-бюджетом (или на большом residual)? Ablation
-проверяет это в лоб. **БЕЗ обучения**, тот же чекпойнт congestion-best (sha `24c8cfb0607235f8`,
-как 0008/0009).
+**Context:** [[0009-phase6b-local-search-polish]] closed with an open question for the thesis: polish
+levelled the starts only **at convergence** (~16s at n=62). Is there a regime where the RL START decides —
+where polish cannot level things out under a hard realtime budget (or on a large residual)? The ablation
+tests that head on. **NO training**, the same congestion-best checkpoint (sha `24c8cfb0607235f8`,
+as in 0008/0009).
 
-## Что построено
+## What was built
 
-`run_dynamic.iter_events` — вынесен поток 0004-харнесса (тот же 5×6, идентичная provenance; `run()`
-теперь поверх). `scripts/run_ablation.py` — на КАЖДОМ событии 4 системы под жёстким **end-to-end**
-бюджетом budget_ms ∈ {50,100,200,500} (decode+polish; превышение = дедлайн-снимок, polish anytime):
-`rl_raw` (greedy-decode политики), `greedy_raw` (эвристика — **контроль старта**), `greedy_polish`,
-`rl_polish`. Единый скорер `evaluate_solution`; парные Δ по событиям (median/wins), как в 0007;
-декомпозиция бюджета (construct_ms/polish_ms) + профиль размера побед (n_pending). 5 стражей: бюджет
-реально бьётся (unbounded polish > budget), единый скорер, детерминизм у сходимости, join событий.
-pytest **104 passed**, ruff чист.
+`run_dynamic.iter_events` — the 0004 harness stream extracted (the same 5×6, identical provenance; `run()`
+now sits on top). `scripts/run_ablation.py` — at EVERY event 4 systems under a hard **end-to-end**
+budget budget_ms ∈ {50,100,200,500} (decode+polish; an overrun = a deadline snapshot, polish is anytime):
+`rl_raw` (the policy's greedy decode), `greedy_raw` (the heuristic — **the start control**), `greedy_polish`,
+`rl_polish`. One scorer `evaluate_solution`; paired Δ over events (median/wins), as in 0007;
+a budget decomposition (construct_ms/polish_ms) + a win-size profile (n_pending). 5 guards: the budget really
+binds (unbounded polish > budget), one scorer, determinism at convergence, the event join.
+pytest **104 passed**, ruff clean.
 
-## Результат (0004, 5 сидов × 6 событий, 400 записей; budget-bound cost → wall-clock-dependent)
+## Result (0004, 5 seeds × 6 events, 400 records; the cost is budget-bound → wall-clock-dependent)
 
 | budget | rl_raw | greedy_raw | greedy_polish | rl_polish | rl_pol − gr_pol |
 |--------|--------|-----------|---------------|-----------|-----------------|
-| 50мс  | 865.5 (18мс) | **851.5 (7мс)** | 839.7 | 851.2 | **Δ̃+10.3€ w5/l18** |
-| 100мс | 865.5 | 851.5 | 836.5 | 843.3 | Δ̃+4.4€ w9/l14 |
-| 200мс | 865.5 | 851.5 | 830.6 | 832.1 | Δ̃+0.0€ w12/l11 |
-| 500мс | 865.5 | 851.5 | 823.1 | 821.4 | Δ̃+0.0€ w12/l11 |
+| 50ms  | 865.5 (18ms) | **851.5 (7ms)** | 839.7 | 851.2 | **Δ̃+10.3€ w5/l18** |
+| 100ms | 865.5 | 851.5 | 836.5 | 843.3 | Δ̃+4.4€ w9/l14 |
+| 200ms | 865.5 | 851.5 | 830.6 | 832.1 | Δ̃+0.0€ w12/l11 |
+| 500ms | 865.5 | 851.5 | 823.1 | 821.4 | Δ̃+0.0€ w12/l11 |
 
-**Старт (до polish):** `rl_raw` 865.5 vs `greedy_raw` 851.5 — RL-старт **Δ̃+9.6€ (mean +14.0€),
-выигрывает лишь 6/25**. Вклад polish растёт с бюджетом (rl medΔ −10.5→−44.8€, greedy −11.9→−30.3€).
+**The start (before polish):** `rl_raw` 865.5 vs `greedy_raw` 851.5 — the RL start is **Δ̃+9.6€ (mean +14.0€)
+and wins only 6/25**. The polish contribution grows with the budget (rl medΔ −10.5→−44.8€, greedy −11.9→−30.3€).
 
-## Вывод — честный (веду с главного)
+## Conclusion — honest (leading with the main point)
 
-- **Ниши НЕТ.** Гипотеза «лучший старт RL окупится там, где polish не сходится» рушится на посылке:
-  **достижимый RL-старт (одиночный greedy-decode) НЕ лучше greedy — он ХУЖЕ**. 865.5 vs 851.5,
-  выигрывает 6/25. Полировать нечего улучшать поверх greedy.
-- **Под жёстким бюджетом RL проигрывает по ОБЕИМ осям.** (1) старт хуже; (2) decode **18мс vs
-  greedy 7мс** → на 50мс остаётся ~32мс polish против ~43мс у greedy — RL-decode крадёт свой же
-  бюджет полировки. Итог @50мс: `rl_polish` **проигрывает** `greedy_polish` (Δ̃+10.3€, l18/25) —
-  это АНТИ-ниша, а не ниша. Латентный выигрыш RL был только vs OR-Tools (2001мс); против greedy —
-  greedy и быстрее, и старт лучше.
-- **С ростом бюджета polish выравнивает** (200/500мс: Δ̃+0.0€, 12/11 = монетка) — подтверждает
-  [[0009-phase6b-local-search-polish]] уже под суб-секундным бюджетом, не только у 16с-сходимости.
-- **Большого-residual ниши тоже нет:** победы `rl_polish` НЕ концентрируются на крупных инстансах
-  (медиана n_pending побед 32–41 ≈ общая 43; max n=60). При заметно больших residual — та же монетка.
-- **Оговорка = несущий скоуп (даю ДО синтеза).** Вердикт про ОДИН decode: realtime-регим даёт
-  бюджет ровно на один decode, не на POMO-multistart 0009 (K× decode). Multistart-RL (785.3) как
-  СТАРТ сильнее greedy, но под жёстким бюджетом недостижим. Ablation берёт **50–500мс**, 0009 —
-  сходимость **~16с**; монотонный тренд (wins 5→9→12→12, Δ̃ +10.3→+0.0€) ПОПЕРЁК этого зазора
-  закрывает и «а вдруг RL выигрывает на промежуточных ~2с».
+- **There is NO niche.** The hypothesis "a better RL start pays off where polish cannot converge" collapses at
+  its premise: **the reachable RL start (a single greedy decode) is NOT better than greedy — it is WORSE**.
+  865.5 vs 851.5, winning 6/25. There is nothing to polish into an advantage over greedy.
+- **Under a hard budget RL loses on BOTH axes.** (1) the start is worse; (2) the decode takes **18ms vs
+  greedy's 7ms** → at 50ms only ~32ms of polish remain against greedy's ~43ms — the RL decode steals its own
+  polishing budget. The result @50ms: `rl_polish` **loses** to `greedy_polish` (Δ̃+10.3€, l18/25) —
+  this is an ANTI-niche, not a niche. The RL latency win existed only vs OR-Tools (2001ms); against greedy —
+  greedy is both faster and has the better start.
+- **As the budget grows polish levels things out** (200/500ms: Δ̃+0.0€, 12/11 = a coin flip) — confirming
+  [[0009-phase6b-local-search-polish]] already under a sub-second budget, not only at the 16s convergence.
+- **There is no large-residual niche either:** `rl_polish` wins do NOT concentrate on large instances
+  (the median n_pending of wins is 32–41 ≈ the overall 43; max n=60). At noticeably larger residuals — the same coin flip.
+- **The caveat = a load-bearing scope (given BEFORE the synthesis).** The verdict concerns ONE decode: the
+  realtime regime affords exactly one decode, not the POMO multistart of 0009 (K× decode). Multistart RL (785.3)
+  as a START is stronger than greedy, but it is unreachable under a hard budget. The ablation takes **50–500ms**,
+  0009 takes convergence at **~16s**; the monotone trend (wins 5→9→12→12, Δ̃ +10.3→+0.0€) ACROSS that gap
+  also closes the "but maybe RL wins at an intermediate ~2s".
 
-**Итог Phase 6b (точно):** RL не даёт преимущества по качеству **НАД КЛАССИКОЙ** — у сходимости
-multistart-RL лишь СРАВНЯЛСЯ с greedy ([[0009-phase6b-local-search-polish]]), под жёстким бюджетом
-одиночный decode ПРОИГРЫВАЕТ (здесь). Это «классика доминирует по качеству», НЕ «RL плох». Реальный
-вклад RL — мгновенный ответ **vs OR-Tools** (не vs greedy: greedy и быстрее, и лучше стартом).
-Дальше — либо Path B (residual-дообучение: сделать СТАРТ RL реально лучше greedy на re-plan-
-распределении), либо принять итог и не переоткрывать.
+**Phase 6b outcome (precisely):** RL brings no quality advantage **OVER THE CLASSICS** — at convergence
+multistart RL only DREW with greedy ([[0009-phase6b-local-search-polish]]), and under a hard budget a
+single decode LOSES (here). This is "the classics dominate on quality", NOT "RL is bad". The real
+contribution of RL is an instant answer **vs OR-Tools** (not vs greedy: greedy is both faster and better as a
+start). Next — either Path B (residual fine-tuning: make the RL START genuinely better than greedy on the
+re-plan distribution), or accept the outcome and do not reopen it.
 
-## Тесты
+## Tests
 
-Бюджет соблюдён (латентность ≤ budget+ε, дедлайн реально достигается), единый скорер, детерминизм
-у сходимости, `measure_event` эмитит все системы/бюджет + raw_cost консистентен со стартом.
-Provenance/sha — `results/ablation_summary.json` (вне git, запрет №1).
-Связи: [[0004-dynamics]] · [[0008-phase6b-inference-search]] · [[0009-phase6b-local-search-polish]].
+The budget holds (latency ≤ budget+ε, the deadline is really reached), one scorer, determinism
+at convergence, `measure_event` emits every system/budget + raw_cost is consistent with the start.
+Provenance/sha — `results/ablation_summary.json` (outside git, prohibition #1).
+Links: [[0004-dynamics]] · [[0008-phase6b-inference-search]] · [[0009-phase6b-local-search-polish]].

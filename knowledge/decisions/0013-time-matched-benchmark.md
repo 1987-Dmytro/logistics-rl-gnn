@@ -6,61 +6,65 @@ status: accepted
 tags: [decision, benchmark, ortools, anytime, time-matched, cvrptw, phase8, verdict]
 ---
 
-# 0013 — Time-matched: OR-Tools anytime vs система (задача #15, финал бенчмарков)
+# 0013 — Time-matched: OR-Tools anytime vs the system (task #15, the final benchmark)
 
-**Последний honest-тест деплой-системы: даём OR-Tools ТОТ ЖЕ wall-clock и меряем качество на
-ИДЕНТИЧНЫХ инстансах.** Вопрос: честен ли «латентный edge» системы в СТАТИКЕ, или система просто
-сравнивалась с недобюджеченным OR-Tools. `scripts/run_timematch.py` (БЕЗ обучения): full-62,
-seeds 0–9, тот же `generate_instance` + единый `evaluate_solution` (запрет №3), бюджеты
-{0.7,2,5,30}с → anytime-кривая. Артефакт `results/timematch.json` (вне git, запрет №1).
+**The last honest test of the deployed system: give OR-Tools THE SAME wall-clock and measure quality on
+IDENTICAL instances.** The question: is the system's "latency edge" honest in STATICS, or was the system
+merely compared against an under-budgeted OR-Tools. `scripts/run_timematch.py` (NO training): full-62,
+seeds 0–9, the same `generate_instance` + the single `evaluate_solution` (prohibition #3), budgets
+{0.7,2,5,30}s → an anytime curve. The artefact `results/timematch.json` (outside git, prohibition #1).
 
-## Карантин конфляции (ловлен advisor в Phase 8, повторно здесь)
+## The conflation quarantine (caught by the advisor in Phase 8, repeated here)
 
-ТЗ просило «сравнить с системой 631.6€ @ 689мс» — но это **два разных сеттинга**: 631.6€ система
-берёт polish-бюджетом 30000мс/кандидат ×≤3 (`system_metrics.json`) → её статик-wall-clock **≥30с**,
-а 689мс — **динамическая** re-plan латентность на residual-инстансе (там cost 827€, unserved 2.0,
-`polish_summary.json`). Точку системы НЕ ставим на 689мс: она на её РЕАЛЬНОМ статик-x (≥30с),
-y=631.6€; 689мс/827€ — отдельным полем как динамика. Не одна точка «631.6€ @ 689мс».
+The brief asked to "compare with the system's 631.6€ @ 689ms" — but those are **two different settings**:
+the system reaches 631.6€ with a polish budget of 30000ms/candidate ×≤3 (`system_metrics.json`) → its
+static wall-clock is **≥30s**, while 689ms is the **dynamic** re-plan latency on a residual instance
+(where the cost is 827€, unserved 2.0, `polish_summary.json`). We do NOT place the system's point at 689ms:
+it sits at its REAL static x (≥30s), y=631.6€; 689ms/827€ goes into a separate field as dynamics. Not one
+point "631.6€ @ 689ms".
 
-## Парная дисциплина (как [[0010-phase6b-ablation-latency-niche]]), не unpaired σ
+## Paired discipline (as in [[0010-phase6b-ablation-latency-niche]]), not unpaired σ
 
-Данные ПАРНЫЕ (те же seeds 0–9 у OR-Tools и системы) → межсидовый σ~44€ это common-mode сложность
-инстанса, **сокращается**. Веду median-Δ + wins на общих сидах (per-seed система добрана в
-`system_metrics.json:per_seed_cost_eur`, детерминир. перепрогон eval_system, парити 631.62 ✓), а не
-across-seed σ как шумовой пол (это нарушило бы дух запрета №3 в outward-числе).
+The data are PAIRED (the same seeds 0–9 for OR-Tools and the system) → the across-seed σ~44€ is the
+common-mode difficulty of the instance and **cancels**. I lead with median-Δ + wins on the shared seeds (the
+system's per-seed values were added in `system_metrics.json:per_seed_cost_eur`, a deterministic re-run of
+eval_system, parity 631.62 ✓) rather than with an across-seed σ as a noise floor (that would violate the
+spirit of prohibition #3 in an outward-facing number).
 
-| Бюджет OR-Tools | cost, € (±std) | wins/10 vs система | медиана Δ/сид |
-|-----------------|---------------:|-------------------:|-------------:|
-| 0.7с | 629.7 ± 44 | 6/10 | −4.9€ |
-| 2.0с | 626.1 ± 42 | 7/10 | −10.5€ |
-| 5.0с | 625.0 ± 42 | 7/10 | −11.2€ |
-| 30с  | 610.5 ± 39 | **8/10** | **−18.6€** |
+| OR-Tools budget | cost, € (±std) | wins/10 vs the system | median Δ/seed |
+|-----------------|---------------:|----------------------:|-------------:|
+| 0.7s | 629.7 ± 44 | 6/10 | −4.9€ |
+| 2.0s | 626.1 ± 42 | 7/10 | −10.5€ |
+| 5.0s | 625.0 ± 42 | 7/10 | −11.2€ |
+| 30s  | 610.5 ± 39 | **8/10** | **−18.6€** |
 
-(30с-точка = 610.5€ — парити к 611.1€ [[0002-baselines]] в пределах wall-clock-джиттера GLS
-best-so-far, tol 2€ как eval_system; кривая монотонна.)
+(The 30s point = 610.5€ — parity with 611.1€ [[0002-baselines]] within the wall-clock jitter of GLS
+best-so-far, tol 2€ as in eval_system; the curve is monotone.)
 
-## Вывод — честный
+## Conclusion — honest
 
-- **У системы НЕТ статик-преимущества ни по качеству, ни по латентности.** OR-Tools выходит на
-  паритет со статик-качеством системы (631.6€) уже к **<1с** (6/10, медиана −4.9€), а к 30с ясно
-  бьёт её на **8/10** сидов (медиана **−18.6€/сид**) — притом что система на 631.6€ тратит ≥30с
-  polish. Time-matched в статике классика доминирует, как и по всей цепочке Phase 6b.
-- **Единственный устойчивый edge GNN+RL — ДИНАМИКА:** re-plan на residual-событии система реагирует
-  за 689мс vs OR-Tools 2001мс ([[0009-phase6b-local-search-polish]] dynamic 5×6), нейро-старт ~15мс
-  ([[0010-phase6b-ablation-latency-niche]], но качество-инфериор). Не качество vs greedy, не статика.
-- **Согласуется с закрытым тезисом** ([[0012-pathB-residual-verdict]]): RL по качеству классику не
-  бьёт. Time-matched заострил: у системы нет и статик-латентного edge — OR-Tools быстрее к той же
-  цене. Кейс «Было/Стало» остаётся честным (система −23.5% к greedy), но НЕ «быстрее/лучше OR-Tools».
+- **The system has NO static advantage, neither in quality nor in latency.** OR-Tools reaches parity with
+  the system's static quality (631.6€) already at **<1s** (6/10, median −4.9€), and by 30s it clearly
+  beats it on **8/10** seeds (median **−18.6€/seed**) — while the system spends ≥30s of polish to reach
+  631.6€. Time-matched, in statics the classics dominate, as along the whole Phase 6b chain.
+- **The only durable edge of GNN+RL is DYNAMICS:** on a residual re-plan event the system reacts
+  in 689ms vs OR-Tools' 2001ms ([[0009-phase6b-local-search-polish]] dynamic 5×6), the neural start ~15ms
+  ([[0010-phase6b-ablation-latency-niche]], but quality-inferior). Not quality vs greedy, not statics.
+- **This agrees with the closed thesis** ([[0012-pathB-residual-verdict]]): on quality RL does not beat
+  the classics. Time-matched sharpened it: the system has no static latency edge either — OR-Tools is faster
+  to the same price. The before/after case stays honest (the system is −23.5% vs greedy), but NOT
+  "faster/better than OR-Tools".
 
-## Диспозиция
+## Disposition
 
-Секцию «Time-matched» в `docs/final_metrics.md` эмитит `final_metrics.py` (единый владелец файла —
-иначе перезапись; парные колонки из двух durable-json). Тесты: парити-30с, монотонность, детерминизм
-ядра, `paired_stats`, парная медиана (pytest 125 ✓). Финал бенчмарков — новых прогонов не планируется.
+The "Time-matched" section of `docs/final_metrics.md` is emitted by `final_metrics.py` (one owner of the file
+— otherwise it gets overwritten; the paired columns come from two durable json files). Tests: the 30s parity,
+monotonicity, determinism of the core, `paired_stats`, the paired median (pytest 125 ✓). This is the final
+benchmark — no further runs are planned.
 
-## Провенанс
+## Provenance
 
-`results/timematch.json` (кривая, per-seed OR) + `system_metrics.json:per_seed_cost_eur` (система,
-парити 631.62) — оба вне git (запрет №1). OR-Tools 9.15.6755, seeds 0–9 full-62 free-flow, единый
-scorer. Код — коммит `0d739dd`. Связи: [[0002-baselines]] · [[0009-phase6b-local-search-polish]] ·
+`results/timematch.json` (the curve, per-seed OR) + `system_metrics.json:per_seed_cost_eur` (the system,
+parity 631.62) — both outside git (prohibition #1). OR-Tools 9.15.6755, seeds 0–9 full-62 free-flow, one
+scorer. The code is commit `0d739dd`. Links: [[0002-baselines]] · [[0009-phase6b-local-search-polish]] ·
 [[0010-phase6b-ablation-latency-niche]] · [[0012-pathB-residual-verdict]].

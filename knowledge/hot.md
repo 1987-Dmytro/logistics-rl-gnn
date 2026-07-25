@@ -2,109 +2,90 @@
 
 # Hot Cache
 
-**Auto-refreshed:** 2026-07-23 14:30:03 (every SessionStart)
+**Auto-refreshed:** 2026-07-25 14:39:13 (every SessionStart)
 **Branch:** `main`
 
 ## 🔀 Recent commits (top 5)
 
 ```
-0d739dd feat(bench): time-matched OR-Tools anytime vs система (задача #15)
-67a75d6 docs(vault): Phase 6b закрыт (Path B FAIL) + Phase 8 — hot/daily/index
-a614509 feat(viz): Phase 8 — визуализация кейса + финальные метрики Было/Стало
-a174489 docs(decision): 0012 Path B residual-curriculum — гейт FAIL (Phase 6b закрыт)
-c26f6ae feat(ablation): латентная ниша RL — ниши нет (Phase 6b, decision 0010)
+26195b3 chore(i18n): translate CLAUDE.md + vault scripts (+ language policy section)
+82078ae chore(i18n): translate code comments and script output strings to English
+afe319f docs(readme): оговорка о train-распределении weekday в Custom scenarios
+1d9bc5f feat(demo): провенанс модели, ablation --no-model и кастомные сценарии (Phase 9 приёмка)
+a1e3b0b feat(demo): нарратив ценности — переименование + compare.html + дорожная геометрия
 ```
 
 ## 📋 Recent decisions
 
-- `0013-time-matched-benchmark.md` — 0013 — Time-matched: OR-Tools anytime vs система (задача #15, финал бенчмарков)
-- `0012-pathB-residual-verdict.md` — 0012 — Path B: вердикт по предрегистрации (Phase 6b)
-- `0011-pathB-residual-curriculum-prereg.md` — 0011 — Path B: residual-curriculum, ПРЕДРЕГИСТРАЦИЯ (Phase 6b)
+- `0013-time-matched-benchmark.md` — 0013 — Time-matched: OR-Tools anytime vs the system (task #15, the final benchmark)
+- `0012-pathB-residual-verdict.md` — 0012 — Path B: the verdict on the pre-registration (Phase 6b)
+- `0011-pathB-residual-curriculum-prereg.md` — 0011 — Path B: residual curriculum, PRE-REGISTRATION (Phase 6b)
 
 ## 📅 Recent daily logs
 
+- `2026-07-25.md`
 - `2026-07-23.md`
 - `2026-07-22.md`
-- `2026-07-21.md`
 
 <!-- AUTO-GEN END (everything below preserved across refreshes) -->
 
 # Hot Cache — curated
 
-**Last update:** 2026-07-23 14:29 (правится руками / `/close`; секция выше — авто, маркер НЕ трогать)
+**Last update:** 2026-07-25 11:34 (/save; edited by hand / `/close`; the section above is auto — do NOT touch the marker)
 
 ## 🔥 What's Hot
-- **Задача #15 — time-matched бенчмарк (финал, ЗАКРЫТ [[0013-time-matched-benchmark]]):** дали
-  OR-Tools ТОТ ЖЕ wall-clock (бюджеты {0.7,2,5,30}с) на ИДЕНТИЧНЫХ инстансах (full-62, seeds 0–9,
-  единый scorer). **Парно (те же seeds → σ инстанса сокращается, дисциплина 0010):** OR выходит на
-  паритет со статик-качеством системы (631.6€) к **<1с (6/10, медиана −4.9€)**, к **30с бьёт 8/10,
-  медиана −18.6€/сид** — притом что система на 631.6€ тратит ≥30с polish. **У системы НЕТ статик-
-  преимущества** ни по качеству, ни по латентности; edge — только ДИНАМИКА (re-plan на residual
-  689мс vs OR 2001мс). **Карантин конфляции (Phase 8):** 631.6€ — статика (≥30с), 689мс — динамика
-  на residual (827€), НЕ одна точка «631.6€ @ 689мс». 30с=610.5€ парити 0002 (wall-clock tol 2€),
-  кривая монотонна. Коммит `0d739dd`, секцию в `docs/final_metrics.md` эмитит final_metrics.py.
-- **Phase 8 — визуализация + финальные метрики (LinkedIn-кейс, ЗАКРЫТ):** карта Аугсбурга Было/Стало
-  (+folium), 2 GIF re-plan (пробка+поломка, задетые рёбра красным), кривые обучения всех фаз,
-  `final_metrics` (сводка из durable-json, **парити-страж 631.6€=0009**). **Честная таблица:** издержки
-  **−23.5%** к greedy, **машино-часы наряда −39.6%** (простой окон, НЕ вождение — пробег ~flat −1%,
-  верифицировано travel-декомпозицией), **+3.4%** к OR-Tools, реакция **×2.9** (деплой-система 689мс).
-  **Латентность разделена (advisor):** нейро-floor ~15мс = потолок скорости, но качество-инфериор
-  (0010); деплой-качество даёт portfolio+polish 689мс. Скрипты+малые PNG/GIF в git (исключ. №1),
-  веса/folium/results — вне. `docs/final_metrics.md`. Коммит `a614509`.
-- **Phase 6b Path B — residual-curriculum: ГЕЙТ FAIL, тезис ЗАКРЫТ ([[0012-pathB-residual-verdict]]):**
-  предрегистрированный гейт 0011 НЕ взят — одиночный decode `rl_raw` **863.4 vs greedy_raw 851.5**
-  (median Δ **+14.84€**, **7/25**; нужно <0 И >12/25). Обучение здоровое (early-stop ep48, отбор ep33,
-  val-RES +1.6%, val-FULL стабилен → anti-forget держал), но выигрыш на single-event val-пуле НЕ
-  перенёсся на многособытийный гейт (раскрытый в 0011 gap #1). **Один заход, без ретрая.** residual
-  sha `dfe8401cc40d519c` (вне git). **Итог Phase 6b:** RL по КАЧЕСТВУ классику не бьёт (A→0008→0009→
-  0010→0012 — у сходимости сравнялся, под бюджетом проиграл); вклад RL = латентность vs OR-Tools.
-  [[0011-pathB-residual-curriculum-prereg]].
-- **Phase 6b Ablation — латентная ниша RL: НЕТ ([[0010-phase6b-ablation-latency-niche]]):** на 25
-  событиях 0004 под бюджетом {50,100,200,500}мс — достижимый RL-старт (**одиночный decode**) ХУЖЕ
-  greedy (865.5 vs 851.5, **6/25**) И медленнее (**18 vs 7мс**); под тесным бюджетом `rl_polish`
-  ПРОИГРЫВАЕТ `greedy_polish` (@50мс Δ̃+10.3€, 18/25) — анти-ниша; polish выравнивает с ростом бюджета
-  (200/500мс монетка 12/11). **Открытый вопрос 0009 закрыт отрицательно.** Итог: RL по качеству НЕ
-  бьёт классику (у сходимости сравнялся, под бюджетом проиграл); латентный выигрыш — только vs OR-Tools.
-- **Phase 6b Шаг 3.5 ЗАКРЫТ — local-search polish (БЕЗ обучения):** polish (2-opt+Or-opt intra,
-  relocate+swap inter; full-eval per move → корректно под time-dependent) — **доминирующий рычаг**:
-  polished-portfolio **631.6€**, gap к OR-Tools **+3.4%** (было +25.4% в Шаге 3), крупнейший сдвиг фазы.
-  **НО polish СТИРАЕТ преимущество нейроконструктора:** greedy→652.2, RL→658.9, sample-K→650.9 — все
-  старты сходятся в ~650-659, **RL-edge +1.0% (RL после polish даже ХУЖЕ greedy)**. Выигрыш =
-  классический local search, достижим из greedy-старта → **НЕ доказывает GNN+RL-тезис**. Динамика −2.8%
-  vs greedy — **конфаунд** (polished-portfolio vs непополир. greedy); честно = гарантия **0/25** +
-  латентность **689мс<1с**. **Урок:** feasibility строго как env (пер-клиент возврат ≤ T_max — иначе
-  под асимметр. OSM polish вернёт env-инфеасибл; поймал adversarial-воркфлоу). [[0009-phase6b-local-search-polish]].
-- **Phase 6b Шаг 3 — инференс-поиск (БЕЗ обучения, PortfolioPlanner):** **динамический пол
-  ЗАКРЫТ** — портфель { sample-K ∪ RL-multistart ∪ greedy } ≥ greedy на **25/25 событиях** по
-  построению (байт-идентичный greedy-кандидат), 0004 re-plan **−0.9%** vs greedy (в 0007 было **+1.6%
-  ХУЖЕ**), латентность **430мс <1с** (OR ×5). Статика: portfolio **766.1€** (−7.2% vs greedy, +25.4%
-  vs OR); дискриминатор — sample-K дал **−2.45% сверх** pre-existing multistart (785.3→766.1, обходит
-  best.pt 770.4). **Честно: динамика — реальный ново-выигрыш; статику тянет multistart, sample-K
-  скромен.** Латентность **env-bound** (~линейна по K; нейронка батчится). [[0008-phase6b-inference-search]].
-- **Phase 6b Шаг 2 — congestion-обучение (Path A + warm-start от 770.4€):** статика **−1.7%**
-  (RL-cong vs RL-ff под congestion, вернул greedy-паритет+; free-flow-best под congestion был +0.8% =
-  OOD), динамика (0004 re-plan) **−0.4%** (слабо, но не выброс: 16:7 событий). **RL под динамикой НЕ
-  обгоняет greedy** (event-dependent); латентность **×134** цела; **floor → деплой ≥ warm-start**.
-  Модест-плюс, статика > динамика. `results/policy_pomo_congestion.pt` (вне git). [[0007-phase6b-congestion-training]].
-  **Урок:** диурнал ~невидим энкодеру (max-норма стирает равномерный c) → **инциденты на t0 — весь сигнал**.
-- **Шаг 1·refit — анти-оверфит POMO валидирован:** «Стало» **783.2€** (не побил прошлый 770.4€, +1.7%),
-  НО обобщение чисто (train/val/test/deploy согласованы → memorization нет) → выигрыш RL реален, не оверфит.
-  `policy_pomo_best.pt` (770.4€) = деплой-модель (refit/congestion — отдельные файлы). [[0006-pomo-static]].
-- **Phase 7 (динамика/латентность):** RL реагирует **×134** быстрее OR-Tools (forward-pass без поиска);
-  качество event-dependent, OR сильнее на больших residual. env НЕ переписан. [[0004-dynamics]], `run_dynamic.py`.
-- **КРИТИЧНО — коллапс обучения (Phase 6):** decoder БЕЗ `C·tanh` (насыщение зануляло grad), advantage
-  НОРМИРУЕТСЯ; freeze-guard `|g|≈0` 3 эпохи → обрыв. НЕ возвращать tanh-clip / ненорм. adv.
-- «Было» Phase 4: greedy **−825€**, OR-Tools **−611€** ([[0002-baselines]], `results/baselines.json`).
-  Единый `env/scoring.py:evaluate_solution` — одна reward-формула для среды И бейзлайнов/политики.
+- **The demo became PROVABLE (Phase 9 acceptance, commit `1d9bc5f`):** a provenance banner (ckpt + sha256 +
+  the training date + [[0007-phase6b-congestion-training]]; the sha is checked against `system_metrics`, a
+  mismatch / no weights → `SystemExit`, there is NO silent fallback) · the portfolio candidate table in [2/5]
+  and [4/5] · `--no-model` (a portfolio without RL candidates) + the line "with the model vs without".
+  **The lesson:** a counterfactual must NOT be extracted from the winning system — greedy+polish out of the
+  portfolio with the model gave Δ ≤ 0 identically; after the fix (a separate portfolio, the full budget) the
+  default prints a day plan of −52.7 € (−8.2 %), and a re-plan of **+5.8 € AGAINST the model** — the durable
+  verdict [[0012-pathB-residual-verdict]] reproduced in one run. `pytest 156` · adversarial-verified (27 agents, 8 findings).
+- **Custom scenarios:** `scenarios/*.yaml` + `config/scenario.py` (weekday → the real
+  `opening_hours` + `c(dow,h)`, pharmacies by name/id/all, demand overrides, the fleet K/Q, a chain of
+  events; validated by the existing guards + `max(demand) ≤ Q`). `demo.py --scenario` — the same
+  pipeline and rendering; **the default Tuesday is byte for byte as before** (587.9 € / 578.7 €). Ready:
+  `friday_south` (14 pharmacies, K=2 → 201.3 €) and `monday_rush` (62 + 2 incidents → inaction ∞).
+  K/Q live in `Instance.meta` (`im.fleet_of`): the env/polish/OR-Tools defaults bind at `def` time.
+- **The Phase 8 human-readable layer is DONE (3 commits `fbf28d9`+`1e349cd`+`a1e3b0b`):** `route_sheet.py`
+  (a human-readable plan from the eval pipeline, the parity guard cost==system_metrics per_seed, the real
+  pharmacy names 62/62 via `enrich_names.py`) · `demo.py` (a 5-step narrative demonstration) ·
+  **`compare.html`** — the screencast frame: A/B/C (do-nothing/OR-Tools/the system in ONE residual world)
+  + two iframes B|C, every hop along real streets (`nx.shortest_path` over graph.graphml). All outputs →
+  `demo_out/` (outside git). The header numbers == the demo output, statics/residual separated, OR@2s honest
+  (not converged; at ~30s it wins). **Adversarial-verified** (7 agents: 2 confirmed+fixed — the map price is
+  tied to the drawn plan; the vacuous test strengthened). `pytest 136` · `ruff` clean.
+- **The project is in publishable form (Phase 9 done):** README (a full EN rewrite), LICENSE (MIT),
+  pyproject metadata, `.github/workflows/ci.yml`, `docs/linkedin_post_draft.md` (2 variants × EN/RU),
+  the honest table `docs/final_metrics.md`. The numbers come ONLY from durable artefacts, statics/dynamics
+  quarantined. Assembled+**adversarial-verified** by a workflow (the verify caught a red CI and an overclaim in
+  LinkedIn — both fixed). Commits `36b8a72`+`219fd7b`. **Before publication: fill in
+  `<user>`/`<repo-url>`** (the README bibtex, pyproject urls, 4 LinkedIn blocks — `TODO(publish)`).
+- **The research outcome — honest, the "RL=quality" thesis is CLOSED ([[honest-asymmetric-verdicts]]):**
+  Phase 6b (0007→0008→0009→0010→[[0012-pathB-residual-verdict]]) + time-matched
+  ([[0013-time-matched-benchmark]]). On QUALITY RL does not beat the classics, and **there is no static latency
+  edge** (OR-Tools time-matched: parity at <1s 6/10, at 30s it wins 8/10, median −18.6€/seed). The only
+  durable contribution of GNN+RL is **the dynamic reaction** (a re-plan in 689ms vs OR's 2001ms). Quality comes
+  from polish, not from the policy (after polish RL is even +1.0% worse than greedy).
+- **Key durable numbers:** greedy **825.4€** · OR-Tools@30s **611.1€** · the system **631.6€**
+  (**−23.5%** vs greedy, **+3.4%** vs OR; vehicle-hours **−39.6%** = window idling, NOT distance ~flat).
+  Reaction: the system **689ms** vs OR **2001ms** (×2.9). One scorer `env/scoring.py:evaluate_solution`
+  ([[0002-baselines]], `results/*.json` outside git).
+- **Do not bring back (lessons):** the decoder WITHOUT `C·tanh` + a normalised advantage (else the Phase 6
+  collapse); polish feasibility STRICTLY as the env (a per-customer return ≤ T_max — else env-infeasible under asymmetric OSM).
 
 ## ⏭️ Next
-- **Phase 6b + бенчмарки ЗАКРЫТЫ** — все пути исчерпаны (Path A 0007 · inference 0008 · polish 0009 ·
-  ablation 0010 · Path B residual 0012 · time-matched 0013). Честный итог: **RL по качеству классику
-  не бьёт, и статик-латентного edge нет (OR-Tools time-matched быстрее к той же цене)**; устойчивый
-  вклад GNN+RL — только ДИНАМИКА (re-plan 689мс vs OR 2001мс), не качество/статика vs greedy/OR.
-- **Phase 8 + финал бенчмарков готовы** — карты/GIF/кривые/таблица + time-matched (`docs/`). Дальше
-  (по запросу): writeup/публикация LinkedIn-кейса (честно: −23.5% к greedy + реакция на событие, НЕ
-  «лучше/быстрее OR-Tools»); опц. деплой-слой. Новой RL-«качество»-ветки НЕ открывать без рычага.
+- **Before publication:** fill in `<user>`/`<repo-url>` in README/pyproject/LinkedIn; after the push to
+  GitHub CI activates (`.[dev,data,env]`, the heavy tests are skipped — green on a bare runner).
+- **Push:** `main` is ahead of `origin` by **10** commits (a614509, 67a75d6, 0d739dd, 086d75c, 36b8a72,
+  219fd7b, fbf28d9, 1e349cd, a1e3b0b, **1d9bc5f**) — not pushed (committing was requested).
+- Optional: record a screencast over `compare.html` (the frame was updated: row C names the REAL
+  portfolio winner, "reaction" is marked as a durable median); a LinkedIn post (after the author's
+  review); optionally a deployment layer (the RL start as an anytime candidate, quality carried by multistart+polish).
+- Optional: your own `scenarios/*.yaml` for a specific conversation (Friday/Saturday/a narrow cluster/an urgent
+  order) — the schema and the loader are ready, README §Custom scenarios.
+- **The research arc is CLOSED** — do not open a new RL-"quality" branch without a new lever.
 
 ## 🚧 Blockers
-- нет
+- none

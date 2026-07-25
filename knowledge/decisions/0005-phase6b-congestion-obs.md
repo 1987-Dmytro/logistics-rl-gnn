@@ -6,42 +6,42 @@ status: accepted
 tags: [decision, congestion, observability, gnn, phase6b]
 ---
 
-# 0005 — Наблюдаемость congestion (Phase 6b · Шаг 0)
+# 0005 — Congestion observability (Phase 6b · Step 0)
 
-**Контекст:** [[0004-dynamics]] показал RL OOD под congestion (free-flow-trained, реагирует лишь
-через feasibility-маску). Шаг 0 — пламбинг: политика ВИДИТ время/пробки. БЕЗ смены обучения;
-переобучение (POMO) — Шаг 1.
+**Context:** [[0004-dynamics]] showed RL is OOD under congestion (free-flow-trained, it reacts only
+through the feasibility mask). Step 0 is plumbing: the policy SEES time/traffic. WITHOUT changing
+training; retraining (POMO) is Step 1.
 
-## Что сделано (3 канала congestion в модель)
+## What was done (3 congestion channels into the model)
 
-1. **edge_attr энкодера** — `travel_time(i,j, cur_time)` АКТИВНОЙ travel-модели (снимок в cur_time),
-   а не фикс. free-flow. Под FreeFlow == прежнее значение (паритет). Закрытие (inf) → крупный
-   конечный «очень медленно» перед нормировкой (без NaN). Размерность ребра та же (1).
-   **Точно:** per-instance max-нормировка `tm/tm.max()` СОКРАЩАЕТ диурнальный множитель (c
-   одинаков по городу для одного снимка → `t0·c/(t0.max()·c)=t0/t0.max()`), поэтому edge_attr
-   несёт **инциденты** (локальные, переживают отношение), а rush-hour доходит до модели через
-   time-context (канал 3). Диурнал В рёбра = смена нормировки (фикс. free-flow reference) — это
-   feature-решение Шага 1, НЕ Шага 0 (сломало бы чистый паритет).
-2. **node_congestion** — новый признак узла (столбец 8): max по активным инцидентам вклада на узел
-   (`Incident.at_node`, конечный сентинел `_CLOSED_LEVEL` при закрытии). 0 под free-flow. Энкодер
-   `in_dim` 7→8.
-3. **time-context** — `[sin_h, cos_h, sin_dow, cos_dow]` (фаза congestion) в контекст декодера.
-   Декодер `ctx_extra` 2→6. Под free-flow — постоянный вход без congestion-сигнала.
+1. **the encoder's edge_attr** — `travel_time(i,j, cur_time)` of the ACTIVE travel model (a snapshot at
+   cur_time) instead of a fixed free-flow value. Under FreeFlow == the previous value (parity). A closure
+   (inf) → a large finite "very slow" before normalisation (no NaN). The edge dimension is unchanged (1).
+   **Precisely:** the per-instance max normalisation `tm/tm.max()` CANCELS the diurnal multiplier (c
+   is the same across the city for one snapshot → `t0·c/(t0.max()·c)=t0/t0.max()`), so edge_attr
+   carries **incidents** (local, they survive the ratio), while rush hour reaches the model through the
+   time-context (channel 3). Putting the diurnal INTO the edges = changing the normalisation (a fixed
+   free-flow reference) — that is a Step 1 feature decision, NOT Step 0 (it would break clean parity).
+2. **node_congestion** — a new node feature (column 8): the max over active incidents of the node
+   contribution (`Incident.at_node`, the finite sentinel `_CLOSED_LEVEL` on a closure). 0 under free-flow.
+   The encoder's `in_dim` goes 7→8.
+3. **time-context** — `[sin_h, cos_h, sin_dow, cos_dow]` (the congestion phase) into the decoder context.
+   The decoder's `ctx_extra` goes 2→6. Under free-flow it is a constant input without a congestion signal.
 
-obs дополнен: `node_features (k,9)` + ключ `time_context (4)`. `TravelModel.offset_min`,
-`env.abs_minute`, `time_context()`, `node_congestion()` — общие хелперы (obs и `build_graph`
-считают одно и то же). FreeFlow → всё нейтрально.
+obs is extended: `node_features (k,9)` + the key `time_context (4)`. `TravelModel.offset_min`,
+`env.abs_minute`, `time_context()`, `node_congestion()` are shared helpers (obs and `build_graph`
+compute the same thing). FreeFlow → everything stays neutral.
 
-## Совместимость чекпойнтов (важно)
+## Checkpoint compatibility (important)
 
-Старый `results/policy_best.pt` (Phase 6, in_dim=7 / ctx_extra=2) **несовместим по размерности** —
-это ОЖИДАЕМО. Переобучение в Шаге 1 (POMO) даст новые веса. **Не грузить старый чекпойнт**;
-`scripts/run_dynamic.py` / eval заработают только после Шага 1 (гард не добавляем — вне scope).
+The old `results/policy_best.pt` (Phase 6, in_dim=7 / ctx_extra=2) is **dimensionally incompatible** —
+that is EXPECTED. Retraining in Step 1 (POMO) produces new weights. **Do not load the old checkpoint**;
+`scripts/run_dynamic.py` / eval will only work after Step 1 (no guard added — out of scope).
 
-## Гейт-регрессия
+## The regression gate
 
-Под FreeFlow congestion-признаки нейтральны: `build_graph` edge_attr бит-в-бит == прежней
-free-flow-норме, node_congestion≡0. overfit-tiny сходится к **78.9€** (== optimum `[0,1,2,0]`) —
-пламбинг не сломал статику. no-NaN forward проверен на CongestionTravel С ЗАКРЫТИЕМ (единственный
-новый risky-путь: inf→сентинел). Тесты: `tests/test_congestion_obs.py` +
-`test_model.test_overfit_tiny_cost_drops` (гоняет free-flow сквозь новый код).
+Under FreeFlow the congestion features are neutral: `build_graph` edge_attr is bit for bit == the old
+free-flow norm, node_congestion≡0. overfit-tiny converges to **78.9€** (== the optimum `[0,1,2,0]`) —
+the plumbing did not break the statics. A no-NaN forward is verified on CongestionTravel WITH A CLOSURE
+(the only new risky path: inf→sentinel). Tests: `tests/test_congestion_obs.py` +
+`test_model.test_overfit_tiny_cost_drops` (which runs free-flow through the new code).
