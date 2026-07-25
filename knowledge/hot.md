@@ -2,17 +2,17 @@
 
 # Hot Cache
 
-**Auto-refreshed:** 2026-07-25 14:52:53 (every SessionStart)
+**Auto-refreshed:** 2026-07-25 17:15:09 (every SessionStart)
 **Branch:** `main`
 
 ## 🔀 Recent commits (top 5)
 
 ```
-5e19af1 docs(i18n): regenerate generated docs (route_sheet, final_metrics, demo assets)
+d6463e9 fix(demo): honest A/B/G/C dashboard — greedy row, unserved/on-time, budget caveats
+c5ea3f6 docs(i18n): regenerate generated docs (route_sheet, final_metrics, demo assets)
 185dc21 docs(i18n): translate decision records 0001-0013, runbooks, vault prose
 26195b3 chore(i18n): translate CLAUDE.md + vault scripts (+ language policy section)
 82078ae chore(i18n): translate code comments and script output strings to English
-afe319f docs(readme): оговорка о train-распределении weekday в Custom scenarios
 ```
 
 ## 📋 Recent decisions
@@ -31,9 +31,34 @@ afe319f docs(readme): оговорка о train-распределении weekd
 
 # Hot Cache — curated
 
-**Last update:** 2026-07-25 11:34 (/save; edited by hand / `/close`; the section above is auto — do NOT touch the marker)
+**Last update:** 2026-07-25 17:45 (GitHub publication; edited by hand / `/close`; the section above is auto — do NOT touch the marker)
 
 ## 🔥 What's Hot
+- **PUBLIC on GitHub: `1987-Dmytro/logistics-rl-gnn`** (MIT, remote `github`; `origin` still points at
+  the base-node bare repo the training runbook pulls from — do NOT repoint it). Publication pass:
+  the `<user>`/`<repo-url>` placeholders are filled (README bibtex, `pyproject [project.urls]`, both
+  LinkedIn variants), the README demo transcript is now **abridged from a real run** instead of a
+  hand-edited paraphrase (the previous one showed wording `demo.py` no longer prints), a wrong
+  `827.3 €` cost-split example → `826.5 €`, and US spelling throughout (`labor`/`kilometers`,
+  `final_metrics.py` regenerated). CI runs on every push — the badge is the live workflow status.
+- **The compare dashboard is now honest AS A WHOLE (commit `d6463e9`, `pytest 158`):** every number
+  in the old A/B/C frame was true and the composition was not. Now: **row G — the greedy re-plan**
+  (the realistic no-ML reaction, same residual/travel/fleet/scorer; seed 0: 516.6 € vs the system's
+  495.9 €) · **unserved + on-time % per row** with the penalty share NAMED inside the cost (that is
+  how B's hidden **400 €** for 2 unserved stops surfaced; `monday_rush`: 1000 € for 5) · **B marked
+  budget-capped** (at ~30 s OR-Tools wins on quality, [[0013-time-matched-benchmark]]) · a **durable
+  25-event footer** (827.3 € vs 851.5 €, median −16.8 €/event, 0/25 violations, read out of
+  `polish_summary.json`) · a headline with BOTH deltas · **attribution** — the seed-0 winner IS the
+  greedy candidate, so the frame says `C = G + local-search polish, the model produced no winning
+  candidate`. The takeaway was rewritten too: "the value is reaction speed, NOT quality" is itself a
+  composition next to a 7 ms heuristic (→ [[honest-asymmetric-verdicts]] lesson 5). No hand-typed
+  durable numbers are left in the demo; a missing `polish_summary.json` is a loud stop.
+- **The repo is fully English (i18n variant A, 4 commits `82078ae`→`c5ea3f6`):** code, scripts'
+  output, `CLAUDE.md` (+ a permanent `## Language policy` section), the whole vault (decisions
+  0001–0013 translated as historical records — no modernisation), the vault scripts (they used to
+  seed Russian into hot.md/index.md every session), `scenarios/*.yaml`, README. `rg '\p{Cyrillic}'`
+  = 1 hit: a pre-i18n commit subject mirrored from `git log` into the AUTO block above. **Write only
+  English into this vault from now on** ([[artifact-language-policy]]); conversation stays ru.
 - **The demo became PROVABLE (Phase 9 acceptance, commit `1d9bc5f`):** a provenance banner (ckpt + sha256 +
   the training date + [[0007-phase6b-congestion-training]]; the sha is checked against `system_metrics`, a
   mismatch / no weights → `SystemExit`, there is NO silent fallback) · the portfolio candidate table in [2/5]
@@ -60,8 +85,8 @@ afe319f docs(readme): оговорка о train-распределении weekd
   pyproject metadata, `.github/workflows/ci.yml`, `docs/linkedin_post_draft.md` (2 variants × EN/RU),
   the honest table `docs/final_metrics.md`. The numbers come ONLY from durable artefacts, statics/dynamics
   quarantined. Assembled+**adversarial-verified** by a workflow (the verify caught a red CI and an overclaim in
-  LinkedIn — both fixed). Commits `36b8a72`+`219fd7b`. **Before publication: fill in
-  `<user>`/`<repo-url>`** (the README bibtex, pyproject urls, 4 LinkedIn blocks — `TODO(publish)`).
+  LinkedIn — both fixed). Commits `36b8a72`+`219fd7b`. The `<user>`/`<repo-url>` placeholders are
+  filled in — see the publication bullet at the top.
 - **The research outcome — honest, the "RL=quality" thesis is CLOSED ([[honest-asymmetric-verdicts]]):**
   Phase 6b (0007→0008→0009→0010→[[0012-pathB-residual-verdict]]) + time-matched
   ([[0013-time-matched-benchmark]]). On QUALITY RL does not beat the classics, and **there is no static latency
@@ -76,13 +101,11 @@ afe319f docs(readme): оговорка о train-распределении weekd
   collapse); polish feasibility STRICTLY as the env (a per-customer return ≤ T_max — else env-infeasible under asymmetric OSM).
 
 ## ⏭️ Next
-- **Before publication:** fill in `<user>`/`<repo-url>` in README/pyproject/LinkedIn; after the push to
-  GitHub CI activates (`.[dev,data,env]`, the heavy tests are skipped — green on a bare runner).
-- **Push:** `main` is ahead of `origin` by **10** commits (a614509, 67a75d6, 0d739dd, 086d75c, 36b8a72,
-  219fd7b, fbf28d9, 1e349cd, a1e3b0b, **1d9bc5f**) — not pushed (committing was requested).
-- Optional: record a screencast over `compare.html` (the frame was updated: row C names the REAL
-  portfolio winner, "reaction" is marked as a durable median); a LinkedIn post (after the author's
-  review); optionally a deployment layer (the RL start as an anytime candidate, quality carried by multistart+polish).
+- Optional: record a screencast over `compare.html` (the frame now carries the greedy row, the
+  unserved/on-time columns and the durable 25-event footer — the narration should follow it);
+  publish the LinkedIn post (`docs/linkedin_post_draft.md`, both variants carry the honest caveat
+  and the live repo URL — final wording is the author's call); optionally a deployment layer (the
+  RL start as an anytime candidate, quality carried by multistart+polish).
 - Optional: your own `scenarios/*.yaml` for a specific conversation (Friday/Saturday/a narrow cluster/an urgent
   order) — the schema and the loader are ready, README §Custom scenarios.
 - **The research arc is CLOSED** — do not open a new RL-"quality" branch without a new lever.

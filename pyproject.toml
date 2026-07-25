@@ -30,11 +30,10 @@ classifiers = [
 # are pinned AFTER the RL problem statement and the target hardware are fixed (CPU vs ROCm).
 dependencies = []
 
-# TODO(publish): replace <user> with the real GitHub path before release.
 # (Must come AFTER all [project] bare keys — a sub-table ends the [project] key list.)
 [project.urls]
-Repository = "https://github.com/<user>/logistics-rl-gnn"
-Issues = "https://github.com/<user>/logistics-rl-gnn/issues"
+Repository = "https://github.com/1987-Dmytro/logistics-rl-gnn"
+Issues = "https://github.com/1987-Dmytro/logistics-rl-gnn/issues"
 
 [project.optional-dependencies]
 dev = [

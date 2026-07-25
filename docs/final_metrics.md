@@ -1,6 +1,6 @@
 # Final metrics — before/after (Augsburg, seeds 0–9, full-62)
 
-> greedy (before) vs the polished portfolio (after) on IDENTICAL instances, one scorer; OR-Tools is the upper bar. Numbers from durable artefacts (parity to decision 0002/0009).
+> greedy (before) vs the polished portfolio (after) on IDENTICAL instances, one scorer; OR-Tools is the upper bar. Numbers from durable artifacts (parity to decision 0002/0009).
 
 | Metric | greedy (before) | OR-Tools | System (after) | Δ vs greedy | Δ vs OR |
 |---|---:|---:|---:|---:|---:|
@@ -12,7 +12,7 @@
 | Unserved | 0.0 | 0.0 | 0.0 | — | — |
 | Re-plan latency | 7 ms | 2001 ms | 689 ms | — | **×2.9 faster** |
 
-\*Vehicle-hours = travel + idle waiting for windows + service. The gain **-39.6%** comes almost entirely from **less idling** (windows): distance is ~flat (-1.0%), service is identical (the same 62 pharmacies). This saves DUTY HOURS (labour), not kilometres.
+\*Vehicle-hours = travel + idle waiting for windows + service. The gain **-39.6%** comes almost entirely from **less idling** (windows): distance is ~flat (-1.0%), service is identical (the same 62 pharmacies). This saves DUTY HOURS (labor), not kilometers.
 
 **Bottom line:** costs **-23.5%** and duty hours **-39.6%** vs greedy (window planning, not distance — it is ~flat), within **+3.4%** of OR-Tools. Event reaction: a neural start ~15ms (the speed ceiling), the deployed system (portfolio+polish) 689ms = **×2.9** vs OR-Tools AT the same quality (+3.4%). Guaranteed ≥ greedy by construction (0008).
 

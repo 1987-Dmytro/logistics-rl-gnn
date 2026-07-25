@@ -114,7 +114,7 @@ def _fmt_md(m: dict) -> str:
         "# Final metrics — before/after (Augsburg, seeds 0–9, full-62)",
         "",
         "> greedy (before) vs the polished portfolio (after) on IDENTICAL instances, one scorer; "
-        "OR-Tools is the upper bar. Numbers from durable artefacts (parity to decision 0002/0009).",
+        "OR-Tools is the upper bar. Numbers from durable artifacts (parity to decision 0002/0009).",
         "",
         "| Metric | greedy (before) | OR-Tools | System (after) | Δ vs greedy | Δ vs OR |",
         "|---|---:|---:|---:|---:|---:|",
@@ -136,7 +136,7 @@ def _fmt_md(m: dict) -> str:
         f"\\*Vehicle-hours = travel + idle waiting for windows + service. The gain "
         f"**{d['time_vs_greedy']:+.1%}** comes almost entirely from **less idling** (windows): "
         f"distance is ~flat ({d['distance_vs_greedy']:+.1%}), service is identical (the same 62 "
-        "pharmacies). This saves DUTY HOURS (labour), not kilometres.",
+        "pharmacies). This saves DUTY HOURS (labor), not kilometers.",
         "",
         f"**Bottom line:** costs **{d['cost_vs_greedy']:+.1%}** and duty hours "
         f"**{d['time_vs_greedy']:+.1%}** vs greedy (window planning, not distance — it is ~flat), "

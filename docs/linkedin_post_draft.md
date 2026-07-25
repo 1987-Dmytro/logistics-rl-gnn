@@ -3,7 +3,6 @@
 > Drafts only — final review by the author. Every number is from a durable seeded artifact.
 > Honesty rules enforced: **no static/dynamic conflation**, **no "we beat OR-Tools"** (static quality
 > is *within 3.4 % of* OR-Tools; the edge vs OR-Tools is *reaction latency*, a different setting).
-> Replace `<repo-url>` before posting.
 
 ---
 
@@ -17,7 +16,7 @@ the real OpenStreetMap road network, with real opening-hours time windows, not a
 On the static daily plan, vs the status-quo greedy dispatcher:
 • **−23.5 % operating cost**
 • **−39.6 % vehicle-hours on duty** (mostly cutting idle waiting at closed time windows — same
-  kilometres, far less waiting)
+  kilometers, far less waiting)
 • Lands **within 3.4 %** of a strong static OR-Tools reference
 
 And in the dynamic setting — a mid-day disruption (traffic, breakdown, urgent order), replanning the
@@ -31,11 +30,9 @@ and classical local-search polish — every number seeded and reproducible.
 neural net — given the same wall-clock, OR-Tools actually edges out the system on static cost. Where
 GNN+RL genuinely earns its place is **reaction speed**: an instant re-plan when the day changes.
 
-Write-up, code, and the honest trade-offs: <repo-url>
+Write-up, code, and the honest trade-offs: https://github.com/1987-Dmytro/logistics-rl-gnn
 
 #OperationsResearch #ReinforcementLearning #Logistics #GraphNeuralNetworks #VehicleRouting
-
----
 
 ---
 
@@ -59,10 +56,11 @@ the dynamic setting it re-plans in ~0.7 s vs ~2 s for an OR-Tools re-solve — a
 reaction*, not in solution cost.
 
 Meanwhile the deployed system still delivers **−23.5 % cost vs the status-quo heuristic**, within
-3.4 % of the static OR-Tools optimum. The quality lever turned out to be classical local search, not
-the policy — and saying so plainly is the point.
+3.4 % of a strong static OR-Tools reference (a 30 s budget — a reference, not a proven optimum). The
+quality lever turned out to be classical local search, not the policy — and saying so plainly is the
+point.
 
-Full decision log, methodology, and reproducible numbers: <repo-url>
+Full decision log, methodology, and reproducible numbers: https://github.com/1987-Dmytro/logistics-rl-gnn
 
 #ReinforcementLearning #OperationsResearch #MachineLearning #ResearchIntegrity #VehicleRouting
 

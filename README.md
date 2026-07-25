@@ -40,7 +40,7 @@ re-solve.
 ## Demo
 
 One command narrates the whole system on real Augsburg data — build the plan, inject a mid-day
-event, react — with every number pulled from the same scorers (no new maths, static and dynamic
+event, react — with every number pulled from the same scorer (no new math, static and dynamic
 worlds kept apart):
 
 ```bash
@@ -48,40 +48,58 @@ python scripts/demo.py --seed 0 --event traffic   # or: breakdown | urgent
 ```
 
 ```text
-[2/5] Building plan… (portfolio + local-search polish)          ← morning
+Model:    results/policy_pomo_congestion.pt · sha256 24c8cfb0607235f8… (== provenance of results/system_metrics.json ✓)
+Trained:  2026-07-22 · 6b-step2-congestion-training · summary results/pomo_congestion_summary.json
+
+[1/5] Morning, Tuesday 08:00. PHOENIX depot, Benzstraße 10, 86391 Stadtbergen.
+      Orders: 62 pharmacies, 476 boxes. Fleet K=8, capacity Q=80, T_max=4 h.
+[2/5] Building the plan… (portfolio + local-search polish)
+      portfolio candidates — the day plan (one scorer; EVERY candidate gets polish):
+        source                   n     best €     mean €  +polish €
+        greedy heuristic         1      744.7      744.7      640.6
+        RL multistart            1      698.9      698.9      616.2
+        RL sample-K            128      743.8      764.1      587.9  ← chosen
       → 6 vehicles, 168.5 km, on-time 100% · 587.9 € (parity with system_metrics per_seed[0] ✓)
-[3/5] 08:52 — EVENT (traffic): closure near «Tattenbach Apotheke» (radius 1.2 km).
-      2 undelivered stops in zone, vehicles [5, 6] affected.
-[4/5] Re-plan — dispatcher's dilemma A/B/G/C (one residual world, one scorer):
-      A do-nothing (drive the old plan):   578.7 € · unserved 0 · on-time 100%
-      B OR-Tools re-solve (budget 2 s):    826.7 € · unserved 2 · on-time 100% · median 2001 ms
-        (B's total jitters with GLS wall-clock; stable part = 2 unserved → 400 € penalty)
-      G greedy re-plan (heuristic, no ML): 516.6 € · unserved 0 · on-time 100% · median    7 ms
-      C system (portfolio+polish):         495.9 € · unserved 0 · on-time 100% · median  689 ms
-      → two comparisons, do not merge them. vs OR-Tools: comparable price at a ×2.9 faster
-        reaction (400 € of its 826.7 € is the penalty for 2 unserved stops; at its full ~30 s
-        budget OR-Tools WINS on quality). vs the greedy re-plan: −20.7 € on this event (durable
-        median −16.8 €/event over 25 events, never worse by construction) — bought at ~96×
-        greedy's reaction time. On THIS event the portfolio winner WAS the greedy candidate:
-        that delta is local-search polish, not the model.
-[5/5] Residual (congestion + event — a *different* world, not comparable to the static 587.9 €):
-      • no re-plan (do-nothing): 578.7 €
-      • replan (system):         495.9 €   (−82.8 € vs inaction · −20.7 € vs the greedy re-plan)
-      • on-time 100%, 0 unserved
+[3/5] 08:52 — EVENT (traffic):
+      jam/incident near pharmacy 'Tattenbach Apotheke' (radius 1.2 km, closure (∞)).
+      2 undelivered stops are in the zone, vehicles affected: [5, 6].
+[4/5] Re-plan from the current state (48 stops remaining)…
+      A do-nothing (drive the old plan): 578.7 € · unserved 0 · on-time 100 %
+      B OR-Tools re-solve (budget 2 s): 826.5 € · unserved 2 · on-time 100 % · durable median 2001 ms
+      G greedy re-plan (heuristic, no ML): 516.6 € · unserved 0 · on-time 100 % · durable median 7 ms
+      C system (portfolio+polish): 495.9 € · unserved 0 · on-time 100 % · durable median 689 ms
+      → Two comparisons, do not merge them. (1) vs OR-Tools: comparable price at a ×2.9 faster
+        reaction — OR has not converged in the reaction budget (~30 s needed); at a full ~30 s
+        budget OR-Tools WINS on quality (dec-0013). (2) vs the greedy re-plan: −20.7 € on this
+        event (durable median −16.8 €/event over 25 events, never worse by construction) — bought
+        at ~96× greedy's reaction time (689 ms vs 7 ms). On THIS event the portfolio winner WAS
+        the greedy candidate: that delta is local-search polish, not the model.
+[5/5] Day outcome (the remainder under congestion+event — ANOTHER world):
+      • without a re-plan (do-nothing): 578.7 €
+      • after re-plan (system): 495.9 € (Δ -82.8 €)   • on-time 100% · unserved 0
+      This run's model contribution (portfolio WITHOUT RL candidates vs with them):
+        • day plan: without the model 640.6 € · with it 587.9 € → -52.7 € (-8.2 %)
+        • re-plan  : without the model 490.1 € · with it 495.9 € → +5.8 € (+1.2 %)
 ```
+
+<sub>Abridged from a real run (the tool also prints per-run wall-clock next to each durable median,
+the re-plan's own candidate table, and the artifact paths). **B's total jitters** with OR-Tools'
+GLS wall-clock (826.5–826.7 € across runs); the stable part is the **2 unserved stops → 400 €
+penalty** inside that total. The last block is the point of `--no-model`: on this event the model
+costs **+5.8 €**, reproducing the durable Path-B verdict in a single run.</sub>
 
 Five self-describing artifacts land in `demo_out/` (git-ignored): **`1_morning_plan.html`** (static
 free-flow day), `route_sheet.md`, **`2_incident_no_replan.html`** (drive the old plan through the
 closure), **`3_incident_replan.html`** (our re-plan — old plan a toggleable dashed layer, jam zone in
 red), and **`compare.html`** — the screencast frame: maps #2 | #3 side-by-side with the A/B/G/C table.
 Every map hop follows real streets (`nx.shortest_path` over the OSM graph, cached). Header prices come
-from the run's scorers; the ×2.9 comes from durable medians in
+from the run's scorer; the ×2.9 comes from durable medians in
 [`0009`](knowledge/decisions/0009-phase6b-local-search-polish.md), not that run's wall-clock.
 
 The frame is built to resist a flattering reading: the **greedy re-plan is a row, not a footnote**
 (it is the realistic no-ML reaction, and on events where greedy wins the portfolio it lands close to
 the system); every row carries **unserved** and **on-time %**, and any unserved penalty is named
-inside the cost (`827.3 € (incl. 400 € unserved penalty)`); **OR-Tools is marked budget-capped** —
+inside the cost (`826.5 € (incl. 400 € unserved penalty)`); **OR-Tools is marked budget-capped** —
 at its full ~30 s budget it beats the system on static quality
 ([`0013`](knowledge/decisions/0013-time-matched-benchmark.md)); and the **durable 25-event context**
 sits under the table so one event is never read as the general case.
@@ -380,8 +398,6 @@ MIT — see [`LICENSE`](LICENSE). If this work is useful, please cite the reposi
   author  = {Gordiyenko, Dmytro},
   title   = {Dynamic Pharmacy Delivery Routing with GNN + Reinforcement Learning},
   year    = {2026},
-  url      = {https://github.com/<user>/logistics-rl-gnn}
+  url      = {https://github.com/1987-Dmytro/logistics-rl-gnn}
 }
 ```
-
-<!-- Replace <user> with the published GitHub path before release. -->
