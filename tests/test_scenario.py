@@ -220,8 +220,10 @@ def test_schema_typos_rejected(tmp_path):
 # ---------- end-to-end demo on a scenario (heavy) ----------
 
 
-@pytest.mark.skipif(not (_CKPT.exists() and _SM.exists() and _HAS_SNAP),
-                    reason="ckpt/snapshot/system_metrics outside git (#1)")
+@pytest.mark.skipif(
+    not (_CKPT.exists() and _SM.exists() and _HAS_SNAP
+         and (_ROOT / "results" / "polish_summary.json").exists()),  # cited by the demo dashboard
+    reason="ckpt/snapshot/system_metrics/polish_summary outside git (#1)")
 def test_demo_on_friday_south_end_to_end(tmp_path):
     """The same pipeline and rendering on a scenario: 5 artefacts, the scenario fleet respected,
     everything served, and an honest 'no durable anchor' in the sheet (prohibition #4)."""

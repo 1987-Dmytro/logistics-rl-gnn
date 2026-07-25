@@ -10,12 +10,17 @@ Steps [2/5] and [4/5] print the portfolio CANDIDATE TABLE (source → cost → w
 `--scenario` swaps the day/pharmacies/fleet/events (config.scenario); without it a default Tuesday.
 
 5 steps in plain language: morning → plan construction (parity with system_metrics) → event (the
-0004 harness) → re-plan (scene A/B/C: do-nothing vs OR-Tools vs the system, live timing + durable
-medians) → the day's outcome. ALL numbers come from the same scorers (route_sheet.build_sheet /
-compare_replan) — static free-flow (587.9€, the full day, map #1) and dynamic congestion residual
-(maps #2/#3) are DIFFERENT worlds and are never mixed. Artefacts → demo_out/ (outside git):
+0004 harness) → re-plan (scene A/B/G/C: do-nothing vs OR-Tools vs the GREEDY re-plan vs the system,
+live timing + durable medians) → the day's outcome. ALL numbers come from the same scorers
+(route_sheet.build_sheet / compare_replan) — static free-flow (587.9€, the full day, map #1) and
+dynamic congestion residual (maps #2/#3) are DIFFERENT worlds and are never mixed. Artefacts →
+demo_out/ (outside git):
   1_morning_plan.html · route_sheet.md · 2_incident_no_replan.html · 3_incident_replan.html ·
-  compare.html (two iframes #2|#3 + the A/B/C table — the frame for a screencast).
+  compare.html (two iframes #2|#3 + the A/B/G/C table — the frame for a screencast).
+Dashboard honesty (`_dashboard`): the greedy re-plan is a ROW, not a footnote (it is the realistic
+no-ML reaction and it is often close); every row shows unserved + on-time and names the unserved
+penalty inside the cost; OR-Tools is marked as budget-capped (it wins on quality at ~30 s); the
+durable 25-event context sits under the table so one event is never read as the general case.
 Map hops follow real streets (nx.shortest_path over graph.graphml, path cache); the old plan on #3
 is a toggleable dashed layer; the incident zone is labelled.
 
@@ -62,12 +67,9 @@ from logistics_rl_gnn.replan.portfolio import SOURCE_RU, PortfolioPlanner  # noq
 _SNAP = Path("data/snapshots/augsburg_20260720")
 _SM = Path("results/system_metrics.json")
 _CFG = CostConfig()
-# durable re-plan medians (polish_summary.json, dec-0009) — hardware-independent anchors
-_DUR = {"rl": 689, "greedy": 7, "ortools": 2001}
-_SPEEDUP = _DUR["ortools"] / _DUR["rl"]  # ×2.9 reaction, system vs OR-Tools (durable)
-# the A/B/C scene title by event kind (the clock comes from data, not hardcoded)
+# the A/B/G/C scene title by event kind (the clock comes from data, not hardcoded)
 # scene title: for traffic it depends on the magnitude (a closure ≠ a slowdown — no lying labels)
-_EVENT_TITLE = {"breakdown": "Ausfall — vehicle lost", "urgent": "Eilauftrag — urgent order"}
+_EVENT_TITLE = {"breakdown": "vehicle lost", "urgent": "urgent order"}
 # vehicle palette (folium) — shared by every demo map
 _PAL = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
 # checkpoint file → the decision where these weights were trained (a claim checkable in the repo).
@@ -146,6 +148,27 @@ def _banner(prov: dict | None, ckpt: Path) -> None:
             f"summary {prov['summary'] or 'n/a'}")
         say(f"Decision: {prov['decision'] or '—'}")
     say("─" * 96)
+
+
+def _durable() -> dict:
+    """Durable re-plan aggregates of harness 0004 (results/polish_summary.json, dec-0009).
+
+    The dashboard cites reaction medians AND the 25-event context from here instead of hand-typed
+    numbers: a re-measured summary moves the frame by itself. Absent → a loud stop, as with the
+    weights (the alternative would be a number nobody can trace).
+    """
+    p = _SM.parent / "polish_summary.json"
+    if not p.exists():
+        raise SystemExit(
+            f"NO DURABLE SUMMARY: {p} (summaries live outside git — prohibition #1). The dashboard "
+            f"cites its reaction medians and the 25-event context: run scripts/run_polish.py first."
+        )
+    d = json.loads(p.read_text())["dynamic"]
+    a, g = d["aggregates"], d["guarantee"]
+    return {"lat": {m: float(a[m]["latency_ms_median"]) for m in ("rl", "greedy", "ortools")},
+            "cost": {m: float(a[m]["cost_eur_mean"]) for m in ("rl", "greedy", "ortools")},
+            "n_events": int(g["n_events"]), "median_delta": float(g["median_delta_eur"]),
+            "violations": int(g["violations"])}
 
 
 def _print_candidates(rows: list, chosen: str, *, note: str = "") -> None:
@@ -239,6 +262,77 @@ def _eur(v: float) -> str:
     """€ for printing. ∞ = the old plan runs THROUGH a closure (δ=∞) → physically impassable;
     not a formatting artefact but the price of inaction: without a re-plan it cannot be executed."""
     return "∞ €" if not math.isfinite(v) else f"{v:.1f} €"
+
+
+def _sgn(v: float) -> str:
+    """A signed € delta: '−16.8 €' cheaper / '+5.8 €' dearer. The sign is never assumed."""
+    return f"{'−' if v < 0 else '+'}{abs(v):.1f} €"
+
+
+def _cost_cell(cost: float, unserved: int, p_unserved: float) -> str:
+    """Cost cell with the penalty share NAMED: '731.5 € (incl. 400 € unserved penalty)'.
+
+    Hiding p_unserved·unserved inside one € number lets a plan that simply skips stops look
+    competitive. ∞ (the old plan runs through a closure) → '∞ €' with no split: dividing ∞ would
+    manufacture a number that does not exist.
+    """
+    if not math.isfinite(cost):
+        return _eur(cost)
+    pen = unserved * p_unserved
+    return _eur(cost) + (f" (incl. {pen:.0f} € unserved penalty)" if pen > 0 else "")
+
+
+def _lat_cell(ms) -> str:
+    """Reaction cell: seconds for a human + the exact ms, both from the same number. None → '0 s'
+    (row A does not react at all)."""
+    if ms is None:
+        return "0 s (no reaction)"
+    return f"{ms / 1000:.1f} s ({ms:.0f} ms)" if ms >= 1000 else f"{ms:.0f} ms"
+
+
+def _dashboard(entries, *, dur: dict, seed: int, scenario=None, p_unserved: float) -> dict:
+    """The compare.html data model — PURE (no I/O), every cell derived from its source.
+
+    entries: [(key, label, q, latency_ms, note)] where `q` is an `evaluate_solution` dict of THIS
+    run (cost = −reward) and latency_ms is None for 'no reaction'. Keys A (inaction) / B (OR-Tools)
+    / G (greedy re-plan) / C (the system) — G sits next to C on purpose: the realistic no-ML
+    reaction is the baseline the system must beat, and on many events it is close (the honest
+    picture, dec-0009/0010). Returns rows + the headline (both deltas), the footnotes and the
+    durable 25-event footer; nothing here is typed by hand.
+    """
+    cost = {k: -q["reward"] for k, _, q, _, _ in entries}
+    rows = [{"k": k, "label": lab,
+             "cost": _cost_cell(-q["reward"], int(q["unserved"]), p_unserved),
+             "unserved": str(int(q["unserved"])), "on_time": f"{q['on_time_pct']:.0f} %",
+             "lat": _lat_cell(ms), "note": note}
+            for k, lab, q, ms, note in entries]
+    if math.isfinite(cost["A"]):
+        head = f"Saving: {_sgn(cost['C'] - cost['A'])} vs inaction (this event)"
+    else:  # the old plan cannot run at all — a saving vs ∞ is not a number
+        head = (f"Inaction is impossible (∞ — the old plan runs through the closure); "
+                f"the re-plan costs {cost['C']:.1f} € (this event)")
+    head += f" · vs greedy re-plan: {_sgn(cost['C'] - cost['G'])} (this event)"
+    scen = "" if scenario is None else f", scenario '{scenario}'"
+    guarantee = ("the portfolio is never worse than greedy by construction"
+                 if dur["violations"] == 0 else
+                 f"WARNING: {dur['violations']}/{dur['n_events']} guarantee violations")
+    footer = (f"Single event (seed {seed}{scen}). Across {dur['n_events']} events (harness 0004), "
+              f"mean cost: system {dur['cost']['rl']:.1f} € vs greedy re-plan "
+              f"{dur['cost']['greedy']:.1f} € — median saving {_sgn(dur['median_delta'])}/event; "
+              f"{guarantee} ({dur['violations']}/{dur['n_events']} violations).")
+    notes = [
+        f"† OR-Tools is limited to the reaction budget (~{dur['lat']['ortools'] / 1000:.0f} s); at "
+        f"its full ~30 s budget it BEATS the system on static quality — see the time-matched table "
+        f"in the README (dec-0013). Its cost here must not be read as an unqualified peer number.",
+        f"Reaction = the durable median over {dur['n_events']} events (dec-0009), not this run's "
+        f"wall-clock. on-time % counts the stops actually VISITED — read it together with "
+        f"unserved. Cost includes {p_unserved:.0f} € per unserved stop, shown split.",
+    ]
+    return {"rows": rows, "headline": head, "notes": notes, "footer": footer,
+            "durable": {"n_events": dur["n_events"], "system_eur": dur["cost"]["rl"],
+                        "greedy_eur": dur["cost"]["greedy"],
+                        "median_delta_eur": dur["median_delta"],
+                        "violations": dur["violations"]}}
 
 
 def _gap_line(title: str, without, with_model, note: str = "") -> str:
@@ -376,8 +470,8 @@ def _render_map(inst, primary, out: Path, *, graph, stop2node, cache, names, pri
                   icon=folium.Icon(color="red", icon="star")).add_to(m)
     for incident in incidents:  # ALL active zones in red + a label (a scenario may give 2+)
         closed = math.isinf(incident.magnitude)  # closure vs slowdown — different labels
-        tag, what = (("🚧 Sperrung", "closure") if closed
-                     else ("🚦 Stau", f"slowdown ×{1 + incident.magnitude:.1f}"))
+        tag, what = (("🚧 road closed", "closure") if closed
+                     else ("🚦 traffic jam", f"slowdown ×{1 + incident.magnitude:.1f}"))
         folium.Circle([incident.center[1], incident.center[0]], radius=incident.radius_km * 1000,
                       color="red", fill=True, fill_opacity=0.12, weight=2,
                       tooltip=f"{what} (r={incident.radius_km:.1f} km)").add_to(m)
@@ -415,39 +509,49 @@ def _render_map(inst, primary, out: Path, *, graph, stop2node, cache, names, pri
     m.save(str(out))
 
 
-def _write_compare(out: Path, *, left: str, right: str, scene_title: str, rows: list,
-                   takeaway: str, right_caption: str = "C: our re-plan in 0.7 s"):
-    """compare.html — the screencast frame: a shared title 'The dispatcher's dilemma' + the A/B/C
-    table (all three costs in ONE residual world + latency) + two iframes (#2 left | #3 right, same
-    viewport). Plain HTML, no new deps; links to the neighbouring files are relative."""
+def _write_compare(out: Path, *, left: str, right: str, scene_title: str, dash: dict,
+                   takeaway: str, right_caption: str):
+    """compare.html — the screencast frame: a shared title 'The dispatcher's dilemma' + the A/B/G/C
+    table (every cost/unserved/on-time in ONE residual world + reaction) + two iframes (#2 left |
+    #3 right, same viewport). Plain HTML, no new deps; neighbour links are relative.
+
+    Renders `dash` (see `_dashboard`) as-is: this function formats nothing numeric, so every number
+    on the page is traceable to this run's scorer or to polish_summary.json.
+    """
     trs = "".join(
-        f'<tr><td class="k">{k}</td><td>{lab}</td><td class="num">{cost}</td>'
-        f'<td class="num">{lat}</td><td>{note}</td></tr>'
-        for k, lab, cost, lat, note in rows)
+        f'<tr><td class="k">{r["k"]}</td><td>{r["label"]}</td><td class="num">{r["cost"]}</td>'
+        f'<td class="num">{r["unserved"]}</td><td class="num">{r["on_time"]}</td>'
+        f'<td class="num">{r["lat"]}</td><td>{r["note"]}</td></tr>'
+        for r in dash["rows"])
     css = (
         "body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#f4f5f7}"
         "header{background:#b23a1e;color:#fff;padding:14px 20px}header h1{margin:0;font-size:22px}"
-        "table{border-collapse:collapse;margin:14px 20px;background:#fff;"
+        "table{border-collapse:collapse;margin:6px 20px;background:#fff;"
         "box-shadow:0 1px 4px rgba(0,0,0,.15)}"
         "th,td{padding:7px 14px;border-bottom:1px solid #e2e4e8;font-size:14px;text-align:left}"
         "th{background:#2b3138;color:#fff}td.k{font-weight:800;text-align:center}"
         "td.num{text-align:right;font-variant-numeric:tabular-nums}"
-        ".take{margin:0 20px 12px;font-size:14px;color:#333}"
+        ".head{margin:12px 20px 0;font-size:16px;font-weight:700;color:#222}"
+        ".fine{margin:0 20px 6px;font-size:12px;color:#555;line-height:1.45}"
+        ".take{margin:8px 20px 12px;font-size:14px;color:#333}"
         ".maps{display:flex;gap:10px;padding:0 12px 14px}.maps figure{flex:1;margin:0}"
         ".maps figcaption{font-size:13px;font-weight:600;padding:4px 6px}"
         "iframe{width:100%;height:78vh;border:1px solid #ccc;border-radius:4px}")
-    # 'reaction' — durable medians (dec-0009), NOT this run's wall-clock: stated in the header
-    thead = ("<tr><th></th><th>scenario</th><th>cost (this run)</th>"
-             "<th>reaction (durable median)</th><th>what it is</th></tr>")
+    thead = ("<tr><th></th><th>scenario</th><th>cost (this run)</th><th>unserved</th>"
+             "<th>on-time %</th><th>reaction</th><th>what it is</th></tr>")
+    fine = "".join(f'<p class="fine">{n}</p>\n' for n in dash["notes"])
     html = (
         f'<!doctype html><meta charset="utf-8"><title>{scene_title}</title>\n'
         f"<style>{css}</style>\n"
         f"<header><h1>{scene_title}</h1></header>\n"
+        f'<p class="head">{dash["headline"]}</p>\n'
         f"<table>{thead}{trs}</table>\n"
+        f"{fine}"
+        f'<p class="fine"><b>{dash["footer"]}</b></p>\n'
         f'<p class="take">{takeaway}</p>\n'
         '<div class="maps">\n'
         " <figure><figcaption>A: do-nothing — driving the old plan through the event "
-        "(B, OR-Tools, has no map)</figcaption>\n"
+        "(B, OR-Tools, and G, greedy, have no map)</figcaption>\n"
         f'  <iframe src="{left}" title="do-nothing"></iframe></figure>\n'
         f" <figure><figcaption>{right_caption}</figcaption>\n"
         f'  <iframe src="{right}" title="re-plan"></iframe></figure>\n'
@@ -467,6 +571,7 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     cfg = sm["config"]
     ckpt = Path(cfg["ckpt"])
     prov = check_model_provenance(ckpt, sm) if use_model else None  # mismatch/no weights → exit
+    dur = _durable()  # reaction medians + the 25-event context cited by the dashboard
     _banner(prov, ckpt)
 
     torch.manual_seed(0)
@@ -582,8 +687,7 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     veh_of, _ = rs._assign(exec_routes, inst, exec_travel)
     ctx = _event_context(event_kind, ev, inst, state, veh_of, names, abs_min=ev.at_min + off)
     title = (_EVENT_TITLE.get(event_kind) or  # traffic: a closure or merely a slowdown
-             ("Straßensperrung — road closed" if math.isinf(ev.incident.magnitude)
-              else "Stau — traffic jam"))
+             ("road closed" if math.isinf(ev.incident.magnitude) else "traffic jam"))
     scene = f"{ctx['clock']} — {title}. The dispatcher's dilemma"
 
     # [3/5] the event
@@ -603,14 +707,20 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
                         title=f"{ctx['clock']} · the remainder is empty ({ttl})",
                         caption="The event hit an empty remainder — the plan did not change.",
                         banner_color="#555", incidents=ctx["incidents"])
+        empty = {"rows": [{"k": "—", "label": "remainder empty", "cost": "0.0 €", "unserved": "0",
+                           "on_time": "100 %", "lat": "0 s (no reaction)",
+                           "note": "the plan did not change"}],
+                 "headline": "No re-plan was needed (the remainder is empty).", "notes": [],
+                 "footer": "", "durable": None}
         _write_compare(p_compare, left=p_noreplan.name, right=p_replan.name, scene_title=scene,
-                       rows=[("—", "remainder empty", "0.0 €", "—", "the plan did not change")],
+                       dash=empty, right_caption="the plan did not change",
                        takeaway="The event hit an empty remainder — no re-plan was needed.")
         _step(5, "Outcome: the event hit an empty remainder, the plan did not change.")
         return {"seed": seed, "event": event_kind, "static_cost": morning_cost,
                 "morning_cost": morning_cost, "n_served": len(state.served), "n_pending": 0,
                 "n_moved": 0, "cost_before": 0.0, "cost_after": 0.0, "or_cost": 0.0,
-                "savings": 0.0, "on_time_pct": 100.0, "unserved": 0, "files": files,
+                "greedy_cost": 0.0, "savings": 0.0, "on_time_pct": 100.0, "unserved": 0,
+                "files": files, "dashboard": empty,
                 "used_model": use_model, "scenario": None if scen is None else scen.name,
                 "plan_report": plan_report, "replan_rows": [], "contribution": None}
 
@@ -623,7 +733,8 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     _step(4, f"Re-plan from the current state ({len(res.demand) - 1} stops remaining)…")
     planner = PortfolioPlanner(pol, k_samples=16, temperature=1.0, rl_starts=8,
                                polish_budget_ms=400.0, polish_top_m=5)
-    cmp = compare_replan(res, travel, pol, fleet_size=fleet, deadline_s=2,
+    deadline_s = 2  # OR-Tools' reaction budget — the same number in the code and on the page
+    cmp = compare_replan(res, travel, pol, fleet_size=fleet, deadline_s=deadline_s,
                          rl_planner=planner, rl_reps=2, warmup=1)
     plan_out = planner.plan(res, travel, fleet_size=fleet)  # routes for the maps + the table
     new = plan_out["routes"]
@@ -656,17 +767,22 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     # costs — ALL in one residual+congestion world (#3: an honest baseline, the same instance)
     old_res = _continue_old_plan(exec_routes, state, idx=idx,  # idx — the same residual numbering
                                  drop_vehicle=ctx["drop_vehicle"], veh_of=veh_of)
-    cost_before = -evaluate_solution(old_res, res, _CFG, travel=travel)["reward"]  # do-nothing
+    q_before = evaluate_solution(old_res, res, _CFG, travel=travel)  # do-nothing
+    cost_before = -q_before["reward"]
     # the system's price is that of the DRAWN plan `new`, not of a separate rl run inside
     # compare_replan (polish is time-budgeted → it could drift from the map); latency comes from it
     q_new = evaluate_solution(new, res, _CFG, travel=travel)
     cost_after = -q_new["reward"]            # the system (portfolio+polish) — the plan on #3
     or_cost = -cmp["ortools"]["reward"]      # OR-Tools re-solve (same residual, deadline 2s)
+    # the greedy re-plan — the REALISTIC no-ML reaction (~7 ms), same residual/travel/fleet/scorer
+    # as A/B/C. On many events it lands close to C: that is the honest picture, not an omission.
+    greedy_cost = -cmp["greedy"]["reward"]
     savings = cost_before - cost_after
     ot, uns = q_new["on_time_pct"], int(q_new["unserved"])
 
     def _lat(mk):
-        return f"{cmp[mk]['latency_ms']:.0f} ms in this run (durable median {_DUR[mk]} ms)"
+        return (f"{cmp[mk]['latency_ms']:.0f} ms in this run "
+                f"(durable median {dur['lat'][mk]:.0f} ms)")
 
     sys_label = ("system (portfolio+polish)" if use_model
                  else "portfolio WITHOUT the model (greedy+polish, --no-model)")
@@ -674,17 +790,28 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     # are labelled by that plan: attributing a 'GNN start' where greedy won would be a lie
     win_src = SOURCE_RU.get(plan_out["source"].partition("+")[0], plan_out["source"])
     win_pol = " + polish" if "+polish" in plan_out["source"] else " (no polish)"
+    # the winner IS the greedy candidate → C differs from row G by local search alone. Left unsaid,
+    # the C−G delta reads as the model's contribution; here the model produced no winning candidate.
+    from_greedy = plan_out["source"].partition("+")[0] == "greedy"
     blocked = not math.isfinite(cost_before)  # the old plan runs through a closure → impassable
     dead = " — the old plan runs THROUGH the closure: it cannot run" if blocked else ""
-    say(f"      A do-nothing (drive the old plan): {_eur(cost_before)}{dead}")
-    say(f"      B OR-Tools re-solve: {or_cost:.1f} € · {_lat('ortools')}")
-    say(f"      C {sys_label}: {cost_after:.1f} € · {_lat('rl')}")
-    say(f"        greedy control (latency): {_lat('greedy')}")
+    for k, lab, q, mk in (("A", f"do-nothing (drive the old plan){dead}", q_before, None),
+                          ("B", f"OR-Tools re-solve (budget {deadline_s} s)", cmp["ortools"],
+                           "ortools"),
+                          ("G", "greedy re-plan (heuristic, no ML)", cmp["greedy"], "greedy"),
+                          ("C", sys_label, q_new, "rl")):
+        say(f"      {k} {lab}: {_eur(-q['reward'])} · unserved {int(q['unserved'])} · "
+            f"on-time {q['on_time_pct']:.0f} %" + (f" · {_lat(mk)}" if mk else ""))
     say(f"      Rebuilt: {n_moved} stops reassigned between vehicles "
         f"(labels matched by max overlap).")
 
-    # the honest verdict (dec-0012/0013): the system's edge is REACTION SPEED, NOT quality. At a
-    # full budget (~30 s) OR-Tools beats the system on quality; here OR only has a reaction budget.
+    # the honest verdict (dec-0009/0012/0013): TWO different comparisons that must not be merged.
+    # vs OR-Tools — reaction speed (OR wins on quality at its full ~30 s budget); vs the greedy
+    # re-plan — a small guaranteed improvement bought at ~100× greedy's latency. Saying "the value
+    # is speed" while a 7 ms heuristic sits in the same table would be the composition this frame
+    # exists to prevent.
+    speedup = dur["lat"]["ortools"] / dur["lat"]["rl"]
+    vs_greedy = dur["lat"]["rl"] / dur["lat"]["greedy"]
     or_note = ("OR has not converged in the reaction budget (~30 s needed)" if or_cost > cost_after
                else
                "here OR is already competitive on price; the edge is reaction speed")
@@ -692,12 +819,19 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
                " NOTE: this run is WITHOUT the model (--no-model) — price C came from a portfolio "
                "without RL candidates, while the durable latency verdict is about the full system.")
     takeaway = (
-        f"Costs (one residual world): inaction {_eur(cost_before)}"
-        f"{' (route blocked)' if blocked else ''} · OR-Tools@~2 s {or_cost:.1f} € · "
-        f"{'system@0.7 s' if use_model else 'portfolio without the model'} {cost_after:.1f} €. "
-        f"The system's value is REACTION SPEED "
-        f"(×{_SPEEDUP:.1f} vs OR-Tools in latency), NOT quality: at a full budget (~30 s) OR "
-        f"beats the system on quality (the durable verdict). {or_note}.{ablated}")
+        f"One residual world, one scorer: inaction {_eur(cost_before)}"
+        f"{' (route blocked)' if blocked else ''} · OR-Tools@{deadline_s} s {or_cost:.1f} € · "
+        f"greedy re-plan {greedy_cost:.1f} € · "
+        f"{'the system' if use_model else 'the portfolio without the model'} {cost_after:.1f} €. "
+        f"Two comparisons, do not merge them. (1) vs OR-Tools: comparable price at a "
+        f"×{speedup:.1f} faster reaction — {or_note}; at a full ~30 s budget OR-Tools WINS on "
+        f"quality (dec-0013). "
+        f"(2) vs the greedy re-plan: {_sgn(cost_after - greedy_cost)} on this event "
+        f"(durable median {_sgn(dur['median_delta'])}/event over {dur['n_events']} events, never "
+        f"worse by construction) — bought at ~{vs_greedy:.0f}× greedy's reaction time "
+        f"({dur['lat']['rl']:.0f} ms vs {dur['lat']['greedy']:.0f} ms)."
+        + (" On THIS event the portfolio winner WAS the greedy candidate: that delta is "
+           "local-search polish, not the model." if from_greedy else "") + ablated)
     say(f"      → {takeaway}")
 
     # [5/5] maps #2/#3 + compare.html (all in the remainder's congestion world — not static 587.9€)
@@ -710,8 +844,9 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
                          + ("— the route is blocked by the closure, the plan cannot run."
                             if blocked else "(residual+congestion).")),
                 banner_color="#b23a1e", incidents=ctx["incidents"])
-    # 'in 0.7 s' — the durable median of the SYSTEM's reaction; under --no-model there was no system
-    replan_title = "Our re-plan in 0.7 s" if use_model else "Re-plan WITHOUT the model (--no-model)"
+    # the title cites the durable median of the SYSTEM's reaction; under --no-model there was none
+    replan_title = (f"Our re-plan in {dur['lat']['rl'] / 1000:.1f} s" if use_model
+                    else "Re-plan WITHOUT the model (--no-model)")
     if blocked:
         cap3 = (f"{replan_title}: {cost_after:.1f} € — an executable plan where the old one "
                 "ran into the closure (∞).")
@@ -725,17 +860,27 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
                 names=names, price=f"{cost_after:.1f} €", price_val=cost_after,
                 title=replan_title, caption=cap3, banner_color="#1a7a3c",
                 incidents=ctx["incidents"], old_routes=old_full)
-    c_lat = f"0.7 s ({_DUR['rl']} ms)" if use_model else f"{cmp['rl']['latency_ms']:.0f} ms"
+    # row C's reaction: the durable median for the system; under --no-model only this run's number
+    # exists (the durable median is the FULL system's — citing it for an ablated run would lie)
+    c_lat = dur["lat"]["rl"] if use_model else cmp["rl"]["latency_ms"]
     c_what = (f"portfolio{'' if use_model else ' WITHOUT the model (--no-model)'}: '{win_src}' won"
-              f"{win_pol}" + (f", reaction ×{_SPEEDUP:.1f}" if use_model else ""))
-    _write_compare(p_compare, left=p_noreplan.name, right=p_replan.name, scene_title=scene, rows=[
-        ("A", "do-nothing (no reaction)", _eur(cost_before), "0 s",
-         "route blocked: the old plan cannot run" if blocked
-         else "drive the old plan, delays accumulate"),
-        ("B", "OR-Tools re-solve", f"{or_cost:.1f} €", f"~2 s ({_DUR['ortools']} ms)",
-         "recompute from scratch, budget ~2 s (full quality at ~30 s)"),
-        ("C", f"our {sys_label}", f"{cost_after:.1f} €", c_lat, c_what)],
-        takeaway=takeaway, right_caption=f"C: {replan_title}")
+              f"{win_pol}" + (f", reaction ×{speedup:.1f} vs OR-Tools" if use_model else ""))
+    if from_greedy:  # name the real author of the C−G delta
+        c_what += (" — C = G + local-search polish"
+                   + ("; the model produced no winning candidate here" if use_model else ""))
+    dash = _dashboard(
+        [("A", "do-nothing (no reaction)", q_before, None,
+          "route blocked: the old plan cannot run" if blocked
+          else "drive the old plan, delays accumulate"),
+         ("B", "OR-Tools re-solve", cmp["ortools"], dur["lat"]["ortools"],
+          "recompute from scratch, capped at the reaction budget †"),
+         ("G", "greedy re-plan (heuristic)", cmp["greedy"], dur["lat"]["greedy"],
+          "the realistic no-ML reaction: what a dispatcher's rule does today"),
+         ("C", f"our {sys_label}", q_new, c_lat, c_what)],
+        dur=dur, seed=seed, scenario=None if scen is None else scen.name,
+        p_unserved=_CFG.p_unserved)
+    _write_compare(p_compare, left=p_noreplan.name, right=p_replan.name, scene_title=scene,
+                   dash=dash, takeaway=takeaway, right_caption=f"C: {replan_title}")
 
     _step(5, "Day outcome (the remainder under congestion+event — ANOTHER world):")
     say(f"      • without a re-plan (do-nothing): {_eur(cost_before)}"
@@ -743,6 +888,9 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     say(f"      • after re-plan ({'system' if use_model else 'no model'}): {cost_after:.1f} € "
         + ("(an executable plan instead of an impossible one)" if blocked
            else f"(Δ {cost_after - cost_before:+.1f}€)"))
+    say(f"      • vs the greedy re-plan ({greedy_cost:.1f} €): {_sgn(cost_after - greedy_cost)} "
+        f"on this event (durable median {_sgn(dur['median_delta'])}/event, {dur['n_events']} "
+        f"events)")
     say(f"      • on-time {ot:.0f}% · unserved {uns} "
         f"{'(every window met ✓)' if ot >= 100 and uns == 0 else '(honestly from the scorer)'}")
     contrib = _print_contribution(plan_report, plan_out, anchor=anchor, use_model=use_model,
@@ -755,8 +903,12 @@ def run_demo(*, seed: int, event_kind: str, out_dir: str, open_maps: bool,
     return {"seed": seed, "event": event_kind, "static_cost": morning_cost,
             "morning_cost": morning_cost, "n_served": len(state.served),
             "n_pending": len(res.demand) - 1, "n_moved": n_moved, "cost_before": cost_before,
-            "cost_after": cost_after, "or_cost": or_cost, "savings": savings,
-            "on_time_pct": ot, "unserved": uns, "files": files,
+            "cost_after": cost_after, "or_cost": or_cost, "greedy_cost": greedy_cost,
+            "savings": savings, "on_time_pct": ot, "unserved": uns, "files": files,
+            "dashboard": dash,  # what compare.html renders (rows/headline/notes/footer)
+            # the raw scorer output behind every dashboard row — one residual world, one scorer:
+            # the guard test traces each cell back to these instead of trusting the HTML
+            "replan_quality": {"A": q_before, "B": cmp["ortools"], "G": cmp["greedy"], "C": q_new},
             "used_model": use_model, "scenario": None if scen is None else scen.name,
             "plan_report": plan_report, "replan_rows": plan_out["rows"], "contribution": contrib}
 

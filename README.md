@@ -52,25 +52,39 @@ python scripts/demo.py --seed 0 --event traffic   # or: breakdown | urgent
       → 6 vehicles, 168.5 km, on-time 100% · 587.9 € (parity with system_metrics per_seed[0] ✓)
 [3/5] 08:52 — EVENT (traffic): closure near «Tattenbach Apotheke» (radius 1.2 km).
       2 undelivered stops in zone, vehicles [5, 6] affected.
-[4/5] Re-plan — dispatcher's dilemma A/B/C (one residual world):
-      A do-nothing (drive old plan): 578.7 €
-      B OR-Tools re-solve:           826.5 €  ·  durable median 2001 ms
-      C system (portfolio+polish):   495.9 €  ·  durable median  689 ms
-      → the system's edge is REACTION SPEED (×2.9 vs OR-Tools latency), NOT quality: given a full
-        budget (~30 s) OR-Tools beats the system on quality (durable verdict); at a ~2 s reaction
-        budget OR-Tools has not converged yet.
+[4/5] Re-plan — dispatcher's dilemma A/B/G/C (one residual world, one scorer):
+      A do-nothing (drive the old plan):   578.7 € · unserved 0 · on-time 100%
+      B OR-Tools re-solve (budget 2 s):    826.7 € · unserved 2 · on-time 100% · median 2001 ms
+        (B's total jitters with GLS wall-clock; stable part = 2 unserved → 400 € penalty)
+      G greedy re-plan (heuristic, no ML): 516.6 € · unserved 0 · on-time 100% · median    7 ms
+      C system (portfolio+polish):         495.9 € · unserved 0 · on-time 100% · median  689 ms
+      → two comparisons, do not merge them. vs OR-Tools: comparable price at a ×2.9 faster
+        reaction (400 € of its 826.7 € is the penalty for 2 unserved stops; at its full ~30 s
+        budget OR-Tools WINS on quality). vs the greedy re-plan: −20.7 € on this event (durable
+        median −16.8 €/event over 25 events, never worse by construction) — bought at ~96×
+        greedy's reaction time. On THIS event the portfolio winner WAS the greedy candidate:
+        that delta is local-search polish, not the model.
 [5/5] Residual (congestion + event — a *different* world, not comparable to the static 587.9 €):
       • no re-plan (do-nothing): 578.7 €
-      • replan (system):         495.9 €   (saving −82.8 €)  ·  on-time 100%, 0 unserved
+      • replan (system):         495.9 €   (−82.8 € vs inaction · −20.7 € vs the greedy re-plan)
+      • on-time 100%, 0 unserved
 ```
 
 Five self-describing artifacts land in `demo_out/` (git-ignored): **`1_morning_plan.html`** (static
 free-flow day), `route_sheet.md`, **`2_incident_no_replan.html`** (drive the old plan through the
 closure), **`3_incident_replan.html`** (our re-plan — old plan a toggleable dashed layer, jam zone in
-red), and **`compare.html`** — the screencast frame: maps #2 | #3 side-by-side with the A/B/C table.
+red), and **`compare.html`** — the screencast frame: maps #2 | #3 side-by-side with the A/B/G/C table.
 Every map hop follows real streets (`nx.shortest_path` over the OSM graph, cached). Header prices come
 from the run's scorers; the ×2.9 comes from durable medians in
 [`0009`](knowledge/decisions/0009-phase6b-local-search-polish.md), not that run's wall-clock.
+
+The frame is built to resist a flattering reading: the **greedy re-plan is a row, not a footnote**
+(it is the realistic no-ML reaction, and on events where greedy wins the portfolio it lands close to
+the system); every row carries **unserved** and **on-time %**, and any unserved penalty is named
+inside the cost (`827.3 € (incl. 400 € unserved penalty)`); **OR-Tools is marked budget-capped** —
+at its full ~30 s budget it beats the system on static quality
+([`0013`](knowledge/decisions/0013-time-matched-benchmark.md)); and the **durable 25-event context**
+sits under the table so one event is never read as the general case.
 
 Every run opens with a **provenance banner** (checkpoint path · sha256 · training date · decision
 record) and hard-fails if that sha does not match the provenance of the durable summary the printed
