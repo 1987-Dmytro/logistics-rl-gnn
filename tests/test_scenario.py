@@ -102,7 +102,7 @@ def test_friday_south_loads():
 
 @pytest.mark.skipif(not _HAS_SNAP, reason="no snapshot (#1)")
 def test_monday_rush_loads_two_incidents():
-    """`all` + два traffic-события в утренний пик; второе — закрытие (δ=∞), зоны разные."""
+    """`all` + two traffic events in the morning peak; the later one closes (δ=∞), zones differ."""
     s = sc.load_scenario(_SCEN / "monday_rush.yaml", snapshot_dir=_SNAP, seed=0)
     assert s.weekday == 0 and s.fleet == (im.FLEET_SIZE, float(im.VEHICLE_CAP))
     assert len(s.instance.demand) - 1 == 62 and s.requested_stops == []
@@ -113,10 +113,10 @@ def test_monday_rush_loads_two_incidents():
     assert tuple(s.events[0].incident.center) != tuple(s.events[1].incident.center)
 
 
-@pytest.mark.skipif(not _HAS_SNAP, reason="нет снапшота (запрет №1)")
+@pytest.mark.skipif(not _HAS_SNAP, reason="no snapshot (#1)")
 def test_events_are_sorted_by_time(tmp_path):
-    """Порядок в YAML произвольный — загрузчик обязан выстроить события по времени (триггер =
-    последнее): без сортировки демо взяло бы триггером не то событие."""
+    """The YAML order is arbitrary — the loader must sort events by time (the trigger is the last
+    one): without sorting the demo would pick the wrong event as the trigger."""
     p = _write(tmp_path, {"name": "order", "pharmacies": ["Vita-Apotheke", "Linden-Apotheke"],
                           "fleet": {"K": 2}, "events": [
                               {"at": "10:00", "type": "breakdown"},
@@ -126,20 +126,20 @@ def test_events_are_sorted_by_time(tmp_path):
     assert [e.at_min for e in s.events] == [30.0, 120.0]
 
 
-# ---------- валидация ----------
+# ---------- validation ----------
 
 
-@pytest.mark.skipif(not _HAS_SNAP, reason="нет снапшота (запрет №1)")
+@pytest.mark.skipif(not _HAS_SNAP, reason="no snapshot (#1)")
 def test_infeasible_fleet_rejected(tmp_path):
-    """Σdemand > K·Q — существующий страж инстанса, ошибка указывает на файл сценария."""
+    """Σdemand > K·Q — the existing instance guard; the error points at the scenario file."""
     p = _write(tmp_path, {"name": "tiny", "pharmacies": "all", "fleet": {"K": 1, "Q": 10}})
     with pytest.raises(ValueError, match="infeasible"):
         sc.load_scenario(p, snapshot_dir=_SNAP, seed=0)
 
 
-@pytest.mark.skipif(not _HAS_SNAP, reason="нет снапшота (запрет №1)")
+@pytest.mark.skipif(not _HAS_SNAP, reason="no snapshot (#1)")
 def test_dispatch_start_shifts_congestion_clock(tmp_path):
-    """dispatch_start сдвигает и окна, И профиль c(dow,h): в 09:00 берётся c(9), не c(8)."""
+    """dispatch_start shifts the windows AND c(dow,h): at 09:00 we take c(9), not c(8)."""
     from logistics_rl_gnn.config import congestion as cg
     from logistics_rl_gnn.env.events import congestion_for
 

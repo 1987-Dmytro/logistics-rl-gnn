@@ -1,35 +1,35 @@
-# Финальные метрики — «Было/Стало» (Аугсбург, seeds 0–9, full-62)
+# Final metrics — before/after (Augsburg, seeds 0–9, full-62)
 
-> greedy (Было) vs полир. портфель (Стало) на ИДЕНТИЧНЫХ инстансах, единый scorer; OR-Tools — верхняя планка. Числа из durable-артефактов (parity к decision 0002/0009).
+> greedy (before) vs the polished portfolio (after) on IDENTICAL instances, one scorer; OR-Tools is the upper bar. Numbers from durable artefacts (parity to decision 0002/0009).
 
-| Метрика | greedy (Было) | OR-Tools | Система (Стало) | Δ vs greedy | Δ vs OR |
+| Metric | greedy (before) | OR-Tools | System (after) | Δ vs greedy | Δ vs OR |
 |---|---:|---:|---:|---:|---:|
-| Издержки, € | 825.4 | 611.1 | **631.6** | **-23.5%** | +3.4% |
-| Пробег, км (топл. прокси) | 158.8 | 144.7 | **157.3** | **-1.0%** | — |
-| Машино-часы в наряде* | 19.3 | 11.2 | **11.6** | **-39.6%** | — |
-| Машин задействовано | 7.2 | 6.3 | **6.4** | -11.1% | — |
+| Costs, € | 825.4 | 611.1 | **631.6** | **-23.5%** | +3.4% |
+| Distance, km (fuel proxy) | 158.8 | 144.7 | **157.3** | **-1.0%** | — |
+| Vehicle-hours on duty* | 19.3 | 11.2 | **11.6** | **-39.6%** | — |
+| Vehicles used | 7.2 | 6.3 | **6.4** | -11.1% | — |
 | On-time, % | 100 | 100 | 100 | — | — |
-| Не обслужено | 0.0 | 0.0 | 0.0 | — | — |
-| Латентность re-plan | 7 мс | 2001 мс | 689 мс | — | **×2.9 быстрее OR** |
+| Unserved | 0.0 | 0.0 | 0.0 | — | — |
+| Re-plan latency | 7 ms | 2001 ms | 689 ms | — | **×2.9 faster** |
 
-\*Машино-часы = travel + простой-ожидание окон + сервис. Выигрыш **-39.6%** — почти весь от **сокращения простоя** (окна): пробег ~flat (-1.0%), сервис идентичен (те же 62 аптеки). Это экономия ЧАСОВ НАРЯДА (труд), не километража.
+\*Vehicle-hours = travel + idle waiting for windows + service. The gain **-39.6%** comes almost entirely from **less idling** (windows): distance is ~flat (-1.0%), service is identical (the same 62 pharmacies). This saves DUTY HOURS (labour), not kilometres.
 
-**Итог:** издержки **-23.5%** и часы наряда **-39.6%** к greedy (планирование окон, не пробег — он ~flat), в **+3.4%** к OR-Tools. Реакция на событие: нейро-старт ~15мс (потолок скорости), деплой-система (portfolio+polish) 689мс = **×2.9** к OR-Tools ПРИ том же качестве (+3.4%). Гарантия ≥ greedy по построению (0008).
+**Bottom line:** costs **-23.5%** and duty hours **-39.6%** vs greedy (window planning, not distance — it is ~flat), within **+3.4%** of OR-Tools. Event reaction: a neural start ~15ms (the speed ceiling), the deployed system (portfolio+polish) 689ms = **×2.9** vs OR-Tools AT the same quality (+3.4%). Guaranteed ≥ greedy by construction (0008).
 
-<sub>Провенанс: baselines.json (0002) · system_metrics.json (парити 0009 631.6€) · polish_summary.json (0009, латентность re-plan 5×6 событий; нейро-floor 14–19мс — ablation 0010, качество-инфериор). Статика — seeds 0–9 full-62. Вне git (№1).</sub>
-## Time-matched — anytime OR-Tools vs система (задача #15)
+<sub>Provenance: baselines.json (0002) · system_metrics.json (parity 0009 631.6€) · polish_summary.json (0009, re-plan latency 5×6 events; the neural floor 14–19ms — ablation 0010, quality-inferior). Statics — seeds 0–9 full-62. Outside git (#1).</sub>
+## Time-matched — anytime OR-Tools vs the system (task #15)
 
-> Даём OR-Tools ТОТ ЖЕ wall-clock и меряем качество на ИДЕНТИЧНЫХ инстансах (full-62, seeds 0–9, единый scorer). Отвечает: честен ли латентный edge системы в СТАТИКЕ.
+> We give OR-Tools THE SAME wall-clock, quality measured on IDENTICAL instances (full-62, seeds 0–9, one scorer). It answers: is the system's latency edge honest in STATICS.
 
-| Бюджет OR-Tools | cost, € (±std) | wins/сид vs система | медиана Δ/сид, € |
+| OR-Tools budget | cost, € (±std) | wins/seed vs system | median Δ/seed, € |
 |---|---:|---:|---:|
-| 0.7с | 629.7 ± 44 | 6/10 | -4.9 |
-| 2.0с | 626.1 ± 42 | 7/10 | -10.5 |
-| 5.0с | 625.0 ± 42 | 7/10 | -11.2 |
-| 30.0с | 610.5 ± 39 | 8/10 | -18.6 |
+| 0.7s | 629.7 ± 44 | 6/10 | -4.9 |
+| 2.0s | 626.1 ± 42 | 7/10 | -10.5 |
+| 5.0s | 625.0 ± 42 | 7/10 | -11.2 |
+| 30.0s | 610.5 ± 39 | 8/10 | -18.6 |
 
-**Система (статика):** 631.6€ при wall-clock **≥30с** (polish 30000мс/кандидат ×≤3 + decode → ≥30с (кандидаты последовательно; истинный wall-clock выше)).
+**System (statics):** 631.6€ at wall-clock **≥30s** (polish 30000ms/candidate ×≤3 + decode → ≥30s; candidates run in sequence, wall-clock is higher).
 
-**Вердикт (парно, те же инстансы — σ сложности сокращается):** к **30с** OR-Tools бьёт систему на **8/10** сидов, медиана **-18.6€/сид**; уже к **0.7с** — 6/10 (медиана -4.9€), т.е. паритет <1с. У системы НЕТ статик-преимущества ни по качеству, ни по латентности; её edge — только ДИНАМИКА (re-plan на residual, 689мс/827€), НЕ статика.
+**Verdict (paired, same instances — the difficulty σ cancels):** by **30s** OR-Tools beats the system on **8/10** seeds, median **-18.6€/seed**; already at **0.7s** — 6/10 (median -4.9€), i.e. parity below 1s. The system has NO static advantage in quality or in latency; its edge is DYNAMICS only (re-plan on a residual, 689ms/827€), not statics.
 
-<sub>ПАРНО: median-Δ/wins на общих seeds 0–9 (σ инстанса сокращается) — дисциплина 0010, не unpaired σ. КАРАНТИН конфляции (Phase 8): 631.6€ — статика (≥30с polish), 689мс — динамическая re-plan латентность на residual (cost 827€), не одна точка «631.6€ @ 689мс». Провенанс: timematch.json (парити 30с=611.1€/0002) + system_metrics.json. Вне git.</sub>
+<sub>PAIRED: median-Δ/wins on the shared seeds 0–9 (the instance σ cancels) — discipline 0010, not unpaired σ. CONFLATION QUARANTINE (Phase 8): 631.6€ is statics (≥30s polish), 689ms is the dynamic re-plan latency on a residual (cost 827€), not one point '631.6€ @ 689ms'. Provenance: timematch.json (parity 30s=611.1€/0002) + system_metrics.json.</sub>

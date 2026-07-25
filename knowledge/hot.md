@@ -2,17 +2,17 @@
 
 # Hot Cache
 
-**Auto-refreshed:** 2026-07-25 14:39:13 (every SessionStart)
+**Auto-refreshed:** 2026-07-25 14:52:53 (every SessionStart)
 **Branch:** `main`
 
 ## 🔀 Recent commits (top 5)
 
 ```
+5e19af1 docs(i18n): regenerate generated docs (route_sheet, final_metrics, demo assets)
+185dc21 docs(i18n): translate decision records 0001-0013, runbooks, vault prose
 26195b3 chore(i18n): translate CLAUDE.md + vault scripts (+ language policy section)
 82078ae chore(i18n): translate code comments and script output strings to English
 afe319f docs(readme): оговорка о train-распределении weekday в Custom scenarios
-1d9bc5f feat(demo): провенанс модели, ablation --no-model и кастомные сценарии (Phase 9 приёмка)
-a1e3b0b feat(demo): нарратив ценности — переименование + compare.html + дорожная геометрия
 ```
 
 ## 📋 Recent decisions

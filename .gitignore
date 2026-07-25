@@ -29,3 +29,6 @@ outputs/
 
 # demo.py artefacts (maps/sheet) — outside git (prohibition #1)
 /demo_out/
+
+# local RU renderings of the LinkedIn drafts (English-only artifacts policy, CLAUDE.md)
+docs/linkedin_post_draft.ru.md

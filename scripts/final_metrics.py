@@ -214,8 +214,11 @@ def _timematch_md() -> str:
         "|---|---:|---:|---:|",
         *rows,
         "",
+        # the note is composed here, not echoed from the json: durable artefacts predate the i18n
+        # pass and store it in Russian (regenerating them would move measured numbers).
         f"**System (statics):** {sc:.1f}€ at wall-clock **≥{sr['static_wallclock_s']:.0f}s** "
-        f"({sr['static_wallclock_note']}).",
+        f"(polish {sr['static_wallclock_s'] * 1000:.0f}ms/candidate ×≤3 + decode → "
+        f"≥{sr['static_wallclock_s']:.0f}s; candidates run in sequence, wall-clock is higher).",
         "",
         verdict,
         "",
