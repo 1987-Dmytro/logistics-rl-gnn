@@ -1,9 +1,9 @@
 # Dynamic Pharmacy Delivery Routing — GNN + Reinforcement Learning on real Augsburg data
 
+[![CI](https://github.com/1987-Dmytro/logistics-rl-gnn/actions/workflows/ci.yml/badge.svg)](https://github.com/1987-Dmytro/logistics-rl-gnn/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
 ![Target](https://img.shields.io/badge/target-CPU--only-lightgrey)
-![Tests](https://img.shields.io/badge/tests-pytest%20%2B%20ruff-informational)
 
 Online (event-driven) **Capacitated Vehicle Routing with Time Windows (CVRPTW)** for same-day
 medication delivery to **62 pharmacies in Augsburg, Germany**, over the **real OpenStreetMap road

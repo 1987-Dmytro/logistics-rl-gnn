@@ -69,6 +69,7 @@ def test_final_metrics_idempotent_and_pure():
 
 def test_eval_system_anchor_matches_0009():
     """The parity anchor in eval_system == durable 0009 631.6€ (self-consistency, no run)."""
+    pytest.importorskip("torch")  # eval_system imports the policy at module level (group [model])
     import eval_system as es
 
     assert abs(es._DURABLE_COST_0009 - _ANCHOR_0009_SYSTEM) < 0.01
