@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Валидатор [[wikilinks]] (brain-init generic, модуль M4).
+"""[[wikilinks]] validator (brain-init generic, module M4).
 
-Скан: knowledge/**/*.md + native memory-dir проекта. Резолв: basename ноты (без .md) ИЛИ
-frontmatter `name:`-slug (memory). Битые — в stdout. Exit 0 всегда (non-blocking).
+Scan: knowledge/**/*.md + the project's native memory dir. Resolution: a note's basename (without
+.md) OR the frontmatter `name:` slug (memory). Broken ones go to stdout. Always exits 0.
 """
 
 import re
@@ -46,7 +46,7 @@ def main():
                 text = p.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            # `[[пример]]` в код-спанах и <!-- комментах --> — упоминания, не линки
+            # `[[example]]` inside code spans and <!-- comments --> is a mention, not a link
             text = re.sub(r"`[^`\n]*`|<!--.*?-->", "", text, flags=re.DOTALL)
             for m in WIKILINK.finditer(text):
                 name = m.group(1).split("|")[0].split("#")[0].strip().removesuffix(".md")
@@ -60,11 +60,11 @@ def main():
                         )
                     )
     if broken:
-        print(f"check-wikilinks: {len(broken)} битых линков")
+        print(f"check-wikilinks: {len(broken)} broken links")
         for f, n in broken[:30]:
-            print(f"  - [[{n}]] в {f}")
+            print(f"  - [[{n}]] in {f}")
     else:
-        print("check-wikilinks: OK, битых нет")
+        print("check-wikilinks: OK, none broken")
 
 
 if __name__ == "__main__":

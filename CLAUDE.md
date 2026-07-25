@@ -1,48 +1,58 @@
 # CLAUDE.md — logistics-rl-gnn
 
-> Dynamic vehicle routing (CVRPTW) через Graph Neural Networks + Reinforcement Learning
-> Этот файл = правила + указатели (НЕ карта кода). Цель ≤200 строк; каждая строка проходит
-> removal-test: «уберём — Claude ошибётся?». Новое правило — на ВТОРОЕ повторение ошибки.
+> Dynamic vehicle routing (CVRPTW) via Graph Neural Networks + Reinforcement Learning
+> This file = rules + pointers (NOT a code map). Target ≤200 lines; every line must pass the
+> removal test: "drop it — will Claude get it wrong?". A new rule is added on the SECOND repeat
+> of a mistake.
 
-## ⚠️ Запреты (НЕ нарушать)
+## ⚠️ Prohibitions (do NOT violate)
 
-1. **НИКОГДА не коммить тяжёлые/сырые артефакты** (OSM-выгрузки, датасеты, чекпойнты `*.pt`,
-   wandb-логи). Данные и веса — вне репо (DVC/ссылки); в git только код и конфиги. Проверка: перед
-   `git add` — нет ли в диффе бинарей/`*.pt`/крупных `data/`.
-2. **НИКОГДА не хардкодь CUDA / `.cuda()`** — код device-agnostic через `torch.device`. Целевое
-   железо CPU-only. Проверка: `grep -rn "\.cuda()\|device=.cuda" src` = пусто.
-3. **НИКОГДА не показывай «Было/Стало» без честного бейзлайна** (OR-Tools + жадная эвристика) на
-   ИДЕНТИЧНОМ инстансе и фиксированном seed. Сравнение без общего бейзлайна = недействительно.
-4. **НИКОГДА не публикуй метрику без зафиксированного seed и сохранённого конфига запуска** —
-   воспроизводимость это цель проекта. Число без seed+config не выходит наружу.
-5. **НИКОГДА не смешивай реальные и синтетические данные без явного флага/тега** — кейс держится
-   на «данные реальные». Каждый инстанс помечен `real`/`synthetic`.
-6. **НИКОГДА не пушь в `main` без прогона `pytest`** (зелёный). Красные/непрогнанные тесты — не в main.
+1. **NEVER commit heavy/raw artefacts** (OSM dumps, datasets, `*.pt` checkpoints, wandb logs).
+   Data and weights live outside the repo (DVC/links); git holds code and configs only. Check:
+   before `git add` — no binaries/`*.pt`/large `data/` in the diff.
+2. **NEVER hardcode CUDA / `.cuda()`** — the code is device-agnostic via `torch.device`. The target
+   hardware is CPU-only. Check: `grep -rn "\.cuda()\|device=.cuda" src` = empty.
+3. **NEVER show a before/after without an honest baseline** (OR-Tools + the greedy heuristic) on an
+   IDENTICAL instance with a fixed seed. A comparison without a shared baseline is void.
+4. **NEVER publish a metric without a pinned seed and a saved run config** — reproducibility is the
+   goal of this project. A number without seed+config does not go out.
+5. **NEVER mix real and synthetic data without an explicit flag/tag** — the case rests on "the data
+   is real". Every instance is tagged `real`/`synthetic`.
+6. **NEVER push to `main` without a green `pytest`.** Red or unrun tests do not reach main.
 
-## Старт сессии — где истина
+## Language policy
 
-- **Live-state** (что активно прямо сейчас / next / blockers) → `knowledge/hot.md` (инжектится авто,
-  SessionStart). Обновление curated-блока — руками или `/close`.
-- **Память** (durable-уроки) — native auto-memory; volatile — только hot.md. Один дом на факт.
+- Conversation: mirror the operator (ru).
+- ALL artifacts are English: code, comments, docstrings, commit messages, docs, vault entries
+  (decisions, runbooks, daily logs, hot.md curated), README.
+- Never let the conversation language leak into artifacts. If an artifact arrives in the wrong
+  language, translate it in the same change.
 
-## Vault (второй мозг)
+## Session start — where the truth lives
 
-- `knowledge/` = Obsidian-vault. Открывать в Obsidian ТОЛЬКО `knowledge/`, не корень проекта.
-- НЕ создавать файлы в vault без запроса; НЕ реструктурировать папки. `[[wikilinks]]` — указатели
-  для читателя (harness их не резолвит).
-- Схема: `daily_logs/` дневники · `decisions/dec-*.md` решения · `architecture/` стандарты ·
-  `runbooks/` процедуры · `templates/` шаблоны.
+- **Live state** (what is active right now / next / blockers) → `knowledge/hot.md` (injected
+  automatically at SessionStart). The curated block is updated by hand or via `/close`.
+- **Memory** (durable lessons) — native auto-memory; volatile state — hot.md only. One home per fact.
 
-## Команды (dev)
+## Vault (second brain)
 
-- Установка dev-окружения: `pip install -e ".[dev]"` (рантайм-депсы пусты до фиксации железа).
-- Тесты: `pytest` · один тест: `pytest tests/test_x.py::test_name` · с покрытием: `pytest --cov=src`.
-- Линт: `ruff check src tests` · автофикс: `ruff check --fix` · формат: `ruff format`.
+- `knowledge/` = an Obsidian vault. In Obsidian open ONLY `knowledge/`, not the project root.
+- Do NOT create vault files unless asked; do NOT restructure folders. `[[wikilinks]]` are pointers
+  for the reader (the harness does not resolve them).
+- Layout: `daily_logs/` journals · `decisions/dec-*.md` decisions · `architecture/` standards ·
+  `runbooks/` procedures · `templates/` templates.
 
-## Path-scoped правила
+## Commands (dev)
 
-- Объёмные инструкции под конкретные пути → `.claude/rules/*.md` c `paths:`-frontmatter
-  (0 токенов на старте; образец: `.claude/rules/_TEMPLATE.md`). Сюда — только всегда-нужное.
+- Install the dev environment: `pip install -e ".[dev]"` (runtime deps stay empty until the
+  hardware is fixed).
+- Tests: `pytest` · one test: `pytest tests/test_x.py::test_name` · with coverage: `pytest --cov=src`.
+- Lint: `ruff check src tests` · autofix: `ruff check --fix` · format: `ruff format`.
 
-<!-- ─── /init fold-in: код-карта/стек — заполняет native /init; после — removal-test,
-     суммарно файл ≤200 строк ─── -->
+## Path-scoped rules
+
+- Bulky instructions for specific paths → `.claude/rules/*.md` with `paths:` frontmatter
+  (0 tokens at startup; sample: `.claude/rules/_TEMPLATE.md`). Keep only always-needed rules here.
+
+<!-- ─── /init fold-in: code map / stack — filled in by native /init; afterwards apply the
+     removal test, total file ≤200 lines ─── -->

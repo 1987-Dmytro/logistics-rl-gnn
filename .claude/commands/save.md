@@ -1,13 +1,14 @@
-# /save — mid-session checkpoint (НЕ закрывает сессию)
+# /save — mid-session checkpoint (does NOT close the session)
 
-Только по явному запросу оператора.
+Only on the operator's explicit request.
 
-1. **Daily log — APPEND** (не rewrite): в `knowledge/daily_logs/<today>.md` дописать секцию
-   `## Checkpoint HH:MM` — что сделано с прошлого чекпойнта, связи `[[wikilinks]]`.
-2. **hot.md curated** — обновить What's Hot / Next / Blockers ниже маркера `AUTO-GEN END`
-   (сам маркер НЕ трогать) + строку `**Last update:**`.
-3. `python3 scripts/refresh-hot-cache.py` — освежить AUTO-секцию.
-4. Если установлен валидатор: `python3 scripts/check-wikilinks.py` — битые линки в вывод (не чинить молча).
-5. Durable-урок появился? → записать в native-память (topic-файл + строка в MEMORY.md).
+1. **Daily log — APPEND** (not a rewrite): in `knowledge/daily_logs/<today>.md` append a section
+   `## Checkpoint HH:MM` — what was done since the previous checkpoint, links via `[[wikilinks]]`.
+2. **hot.md curated** — update What's Hot / Next / Blockers below the `AUTO-GEN END` marker
+   (do NOT touch the marker itself) plus the `**Last update:**` line.
+3. `python3 scripts/refresh-hot-cache.py` — refresh the AUTO section.
+4. If the validator is installed: `python3 scripts/check-wikilinks.py` — report broken links (do not
+   fix them silently).
+5. A durable lesson showed up? → write it to native memory (topic file + a line in MEMORY.md).
 
-Коммиты — отдельно, по запросу оператора.
+Commits are separate, on the operator's request.

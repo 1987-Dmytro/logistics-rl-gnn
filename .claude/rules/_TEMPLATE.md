@@ -2,7 +2,7 @@
 paths:
   - "src/**/*.py"
 ---
-# Образец path-scoped правила (переименуй и заполни)
+# Sample path-scoped rule (rename and fill in)
 
-Грузится ТОЛЬКО при касании файлов из `paths:` (0 токенов на старте) — сюда объёмные инварианты
-конкретной подсистемы. Правило без `paths:` грузится КАЖДУЮ сессию — так не делать без причины.
+Loaded ONLY when files matching `paths:` are touched (0 tokens at startup) — put bulky invariants of
+one subsystem here. A rule without `paths:` is loaded EVERY session — do not do that without a reason.

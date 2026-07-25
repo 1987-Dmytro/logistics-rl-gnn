@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Регенерирует AUTO-секцию knowledge/hot.md (brain-init generic; копия живёт в <project>/scripts/).
+"""Regenerates the AUTO section of knowledge/hot.md (brain-init generic; a copy in scripts/).
 
-Контракт маркеров (verbatim, менять НЕЛЬЗЯ — curated-блок ниже END переживает каждый refresh):
+Marker contract (verbatim, MUST NOT change — the curated block below END survives every refresh):
   <!-- AUTO-GEN START (refreshed by scripts/refresh-hot-cache.py) -->
   <!-- AUTO-GEN END (everything below preserved across refreshes) -->
-Fail-safe: маркеры сломаны/не по одному → предупреждение, файл НЕ трогаем.
+Fail-safe: markers broken / not exactly one each → warn and leave the file untouched.
 """
 
 import subprocess
@@ -38,7 +38,7 @@ def build_auto():
     log = sh("git", "log", "--oneline", "-5")
     if log:
         out += ["## 🔀 Recent commits (top 5)", "", "```", log, "```", ""]
-    goals = ROOT / "knowledge" / "goals" / "INDEX.md"  # feature-detect (модуль M2)
+    goals = ROOT / "knowledge" / "goals" / "INDEX.md"  # feature-detect (module M2)
     if goals.is_file():
         rows = [
             ln
@@ -76,11 +76,11 @@ def build_auto():
 
 def main():
     if not HOT.is_file():
-        print(f"refresh-hot-cache: {HOT} отсутствует — пропуск (scaffold ещё не создал?)")
+        print(f"refresh-hot-cache: {HOT} is missing — skipped (scaffold has not created it yet?)")
         return
     text = HOT.read_text(encoding="utf-8")
     if text.count(START) != 1 or text.count(END) != 1:
-        print("⚠️ refresh-hot-cache: маркеры AUTO-GEN сломаны — файл НЕ тронут (почини маркеры)")
+        print("⚠️ refresh-hot-cache: AUTO-GEN markers are broken — file NOT touched (fix them)")
         return
     curated = text.split(END, 1)[1]
     HOT.write_text(build_auto() + curated, encoding="utf-8")
