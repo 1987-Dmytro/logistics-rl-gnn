@@ -2,17 +2,17 @@
 
 # Hot Cache
 
-**Auto-refreshed:** 2026-07-25 17:15:09 (every SessionStart)
+**Auto-refreshed:** 2026-07-26 10:44:44 (every SessionStart)
 **Branch:** `main`
 
 ## 🔀 Recent commits (top 5)
 
 ```
+7230022 docs(demo): qualify the single-seed day-plan gap with the aggregate
+1b5c95d docs(vault): publication state — runbook push target, CI reality
+2852d6e ci: green on a bare runner + live CI badge
+8dfb323 docs(publish): fill the GitHub URLs, a real demo transcript, US spelling sweep
 d6463e9 fix(demo): honest A/B/G/C dashboard — greedy row, unserved/on-time, budget caveats
-c5ea3f6 docs(i18n): regenerate generated docs (route_sheet, final_metrics, demo assets)
-185dc21 docs(i18n): translate decision records 0001-0013, runbooks, vault prose
-26195b3 chore(i18n): translate CLAUDE.md + vault scripts (+ language policy section)
-82078ae chore(i18n): translate code comments and script output strings to English
 ```
 
 ## 📋 Recent decisions
